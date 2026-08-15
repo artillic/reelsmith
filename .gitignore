@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+probe-dump.json
+
+# Generated projects and source footage: large, and not source code.
+content/
+library/**
+!library/.gitkeep
