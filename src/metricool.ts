@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { requireEnv, optionalEnv } from './config.ts';
+import { resolveMediaBaseUrl } from './storage.ts';
 import { UserError } from './log.ts';
 
 /**
@@ -192,18 +193,13 @@ export function trialFieldFromEnv(): { field: string | undefined; value: unknown
 }
 
 /**
- * Where rendered files are published so Metricool can fetch them. Kept as a
- * pluggable indirection because the right answer differs per user (Supabase
- * Storage, S3, a static host). `reel schedule` refuses to run without it rather
- * than silently scheduling a post with no video.
+ * Where rendered files are published so Metricool can fetch them. The base is
+ * resolved from an explicit MEDIA_PUBLIC_BASE_URL or derived from a configured
+ * Supabase bucket; `reel schedule` refuses to run without one rather than
+ * silently scheduling a post with no video.
  */
 export function publicMediaUrl(localPath: string): string {
-  const base = requireEnv(
-    'MEDIA_PUBLIC_BASE_URL',
-    'Metricool fetches media over HTTP, so rendered files must be reachable at a public URL.',
-  );
-  const name = basename(localPath);
-  return `${base.replace(/\/+$/, '')}/${encodeURIComponent(name)}`;
+  return `${resolveMediaBaseUrl()}/${encodeURIComponent(basename(localPath))}`;
 }
 
 export function fileSizeMb(path: string): number {

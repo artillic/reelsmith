@@ -20,6 +20,7 @@ import {
   publicMediaUrl,
 } from './metricool.ts';
 import { runProbe, leafPaths } from './probe.ts';
+import { loadStorageConfig, uploadObject, verifyPubliclyReadable } from './storage.ts';
 import {
   projectPaths,
   ensureProjectDirs,
@@ -37,6 +38,7 @@ reelsmith — trial reel pipeline
 
   reel ideate   --topic "<topic>" [--reasons 24] [--variants 8] [--notes "..."] [--project <dir>]
   reel render   --project <dir> [--duration 7] [--audio <file>] [--only <hookId>] [--stock]
+  reel upload   --project <dir> [--covers]
   reel schedule --project <dir> --timezone <IANA> [--start YYYY-MM-DDTHH:mm] [--gap 240]
                 [--daily-cap 6] [--window 9-21] [--auto-publish] [--dry-run]
   reel brands
@@ -56,6 +58,8 @@ async function main(): Promise<void> {
       return cmdIdeate(rest);
     case 'render':
       return cmdRender(rest);
+    case 'upload':
+      return cmdUpload(rest);
     case 'schedule':
       return cmdSchedule(rest);
     case 'brands':
@@ -207,6 +211,64 @@ async function cmdRender(argv: string[]): Promise<void> {
 
   log.info('');
   log.info(`Videos in ${paths.out}, captions in ${paths.captions}`);
+}
+
+/* -------------------------------------------------------------- upload --- */
+
+async function cmdUpload(argv: string[]): Promise<void> {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      project: { type: 'string' },
+      covers: { type: 'boolean', default: false },
+    },
+  });
+
+  const paths = projectPaths(requireOption(values.project, 'project'));
+  const spec = readSpec(paths);
+  const config = loadStorageConfig();
+
+  const files = spec.hooks
+    .flatMap((hook) => {
+      const video = join(paths.out, `${hook.id}.mp4`);
+      const cover = join(paths.out, `${hook.id}.jpg`);
+      return values.covers === true ? [video, cover] : [video];
+    })
+    .filter((file) => existsSync(file));
+
+  if (files.length === 0) {
+    throw new UserError(`No rendered files in ${paths.out}. Run \`reel render\` first.`);
+  }
+
+  log.step(`Uploading ${files.length} file(s) to the "${config.bucket}" bucket`);
+
+  let firstVideoUrl: string | null = null;
+  for (const file of files) {
+    const result = await uploadObject(config, file);
+    if (firstVideoUrl === null && file.endsWith('.mp4')) firstVideoUrl = result.publicUrl;
+    log.ok(`${result.objectName}  (${(result.bytes / 1024 / 1024).toFixed(1)} MB)`);
+  }
+
+  // Trust nothing: confirm the bucket really serves these publicly, because the
+  // failure would otherwise surface at publish time as a silently failed post.
+  if (firstVideoUrl !== null) {
+    log.step('Verifying public access');
+    const check = await verifyPubliclyReadable(firstVideoUrl);
+    if (check.ok) {
+      log.ok(`Publicly readable (${check.detail})`);
+    } else {
+      log.error(`${firstVideoUrl} is not publicly readable: ${check.detail}`);
+      log.info(
+        `Set the "${config.bucket}" bucket to Public in the Supabase dashboard under Storage. ` +
+          'Metricool fetches the video at publish time, so a private bucket means the post fails then.',
+      );
+      process.exitCode = 1;
+      return;
+    }
+  }
+
+  log.info('');
+  log.info(`Next: reel schedule --project ${paths.root} --timezone <your timezone>`);
 }
 
 /* ------------------------------------------------------------ schedule --- */

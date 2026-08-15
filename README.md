@@ -16,8 +16,9 @@ held constant. This tool exists to run that test at volume and read the result.
 | 2. B-roll selection (local library + Pexels) | Working |
 | 3. Render (vertical video, burned-in hook, cover frame) | Working |
 | 4. Caption assembly (Instagram limits enforced) | Working |
-| 5. Metricool scheduling | Working as **drafts**; auto-publish and the trial-reel flag need `reel probe` first |
-| 6. Performance ranking | Best-effort — depends on what the API returns (see below) |
+| 5. Upload to public storage (Supabase) | Working |
+| 6. Metricool scheduling | Working as **drafts**; auto-publish and the trial-reel flag need `reel probe` first |
+| 7. Performance ranking | Best-effort — depends on what the API returns (see below) |
 
 **The one unknown.** Metricool supports Instagram Trial Reels in its Planner UI,
 but its public API docs do not name the field that marks a post as a trial reel.
@@ -26,6 +27,22 @@ hand and tells you what the field is called; you put that in `.env` and the
 scheduler starts sending it. Until then, posts are scheduled as ordinary reels —
 or, with the default `--dry-run`-friendly draft mode, as drafts you flip to trial
 in the Planner in about five seconds each.
+
+## Media hosting
+
+Metricool fetches your video **at publish time**, not when you schedule it. That
+makes the storage choice load-bearing: a link that returns an HTML wrapper, or
+that rate-limits automated fetchers, produces a post that fails at 9am and tells
+you nothing until afterwards.
+
+What works is a plain public bucket with path-addressable URLs — `<base>/<file>.mp4`
+resolving to raw bytes. Supabase Storage, Cloudflare R2 and S3 all qualify.
+Google Drive does not: share links serve an HTML preview page, and every file
+gets an opaque id rather than a path, so `<base>/<filename>` cannot be
+constructed at all.
+
+`reel upload` targets Supabase and then makes a HEAD request against the result
+to confirm it is genuinely public before you schedule anything against it.
 
 ## Requirements
 
@@ -73,14 +90,17 @@ npm run reel -- ideate --topic "move to Thailand" --reasons 24 --variants 8
 # 3. Render one vertical mp4 + cover + caption per surviving hook.
 npm run reel -- render --project content/move-to-thailand
 
-# 4. Upload out/*.mp4 somewhere public, set MEDIA_PUBLIC_BASE_URL, then:
+# 4. Push them to the public bucket (verifies they're actually readable).
+npm run reel -- upload --project content/move-to-thailand
+
+# 5. Plan the stagger without sending anything.
 npm run reel -- schedule --project content/move-to-thailand \
   --timezone Asia/Bangkok --gap 300 --daily-cap 4 --dry-run
 
-# 5. Drop --dry-run to actually schedule. Without --auto-publish they land as
+# 6. Drop --dry-run to actually schedule. Without --auto-publish they land as
 #    drafts in the Planner.
 
-# 6. Once they have run, rank the hooks by cold-audience response.
+# 7. Once they have run, rank the hooks by cold-audience response.
 npm run reel -- rank --project content/move-to-thailand
 ```
 
