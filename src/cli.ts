@@ -13,6 +13,8 @@ import { assertFfmpeg, renderVariant, extractCover } from './render.ts';
 import {
   MetricoolClient,
   loadCredentials,
+  loadAccountCredentials,
+  listBrands,
   buildPostPayload,
   trialFieldFromEnv,
   publicMediaUrl,
@@ -37,6 +39,7 @@ reelsmith — trial reel pipeline
   reel render   --project <dir> [--duration 7] [--audio <file>] [--only <hookId>] [--stock]
   reel schedule --project <dir> --timezone <IANA> [--start YYYY-MM-DDTHH:mm] [--gap 240]
                 [--daily-cap 6] [--window 9-21] [--auto-publish] [--dry-run]
+  reel brands
   reel probe    [--out probe-dump.json] [--days 30]
   reel rank     --project <dir>
 
@@ -55,6 +58,8 @@ async function main(): Promise<void> {
       return cmdRender(rest);
     case 'schedule':
       return cmdSchedule(rest);
+    case 'brands':
+      return cmdBrands();
     case 'probe':
       return cmdProbe(rest);
     case 'rank':
@@ -332,6 +337,39 @@ async function cmdSchedule(argv: string[]): Promise<void> {
       log.info('Posts were created as drafts. Approve them in the Metricool Planner.');
     }
   }
+}
+
+/* -------------------------------------------------------------- brands --- */
+
+async function cmdBrands(): Promise<void> {
+  const { token, userId } = loadAccountCredentials();
+  log.step('Listing brands on this Metricool account');
+
+  const res = await listBrands(token, userId);
+  if (!res.ok) {
+    throw new UserError(
+      `Metricool rejected the request (${res.status}).\n${res.text.slice(0, 400)}\n\n` +
+        '401/403 usually means a bad token or an account without API access (Advanced plan). ' +
+        '400 usually means METRICOOL_USER_ID is wrong.',
+    );
+  }
+
+  const brands = Array.isArray(res.data) ? res.data : [];
+  if (brands.length === 0) {
+    log.warn('No brands were returned. Raw response:');
+    log.info(res.text.slice(0, 800));
+    return;
+  }
+
+  log.ok(`${brands.length} brand(s):`);
+  for (const brand of brands) {
+    const record = (typeof brand === 'object' && brand !== null ? brand : {}) as Record<string, unknown>;
+    const id = record['id'] ?? record['blogId'];
+    const label = record['label'] ?? record['title'] ?? record['name'] ?? record['url'] ?? '(unnamed)';
+    log.info(`METRICOOL_BLOG_ID=${String(id)}   ${String(label)}`);
+  }
+  log.info('');
+  log.info('Copy the blogId for the brand you post from into reelsmith/.env');
 }
 
 /* --------------------------------------------------------------- probe --- */

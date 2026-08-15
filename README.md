@@ -47,9 +47,23 @@ npm install
 cp .env.example .env   # then fill it in
 ```
 
+Metricool credentials:
+
+| Value | Where |
+|---|---|
+| `METRICOOL_TOKEN` | Metricool → Account Settings → API |
+| `METRICOOL_USER_ID` | Any dashboard URL: `app.metricool.com/evolution/web?blogId=XXXX&userId=YYYY` |
+| `METRICOOL_BLOG_ID` | The brand you post from — same URL, or `npm run reel -- brands` |
+
+`reel brands` needs only the token and user id, so fill those two first and let
+it tell you the blog id.
+
 ## The loop
 
 ```sh
+# 0. Confirm the credentials work and find your brand id.
+npm run reel -- brands
+
 # 1. Draft the list and the hook variants. Writes content/<slug>/spec.json.
 npm run reel -- ideate --topic "move to Thailand" --reasons 24 --variants 8
 

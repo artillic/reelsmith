@@ -24,11 +24,21 @@ export interface MetricoolCredentials {
   blogId: string;
 }
 
+const TOKEN_HELP = 'Metricool API access requires an Advanced plan. Account Settings > API.';
+const USER_ID_HELP = 'Find it in any dashboard URL: app.metricool.com/evolution/web?blogId=..&userId=..';
+
 export function loadCredentials(): MetricoolCredentials {
   return {
-    token: requireEnv('METRICOOL_TOKEN', 'Metricool API access requires an Advanced plan token.'),
-    userId: requireEnv('METRICOOL_USER_ID', 'Find it in any Metricool dashboard URL.'),
-    blogId: requireEnv('METRICOOL_BLOG_ID', 'This is the brand id. `reel probe` lists them.'),
+    ...loadAccountCredentials(),
+    blogId: requireEnv('METRICOOL_BLOG_ID', 'This is the brand id. Run `reel brands` to list them.'),
+  };
+}
+
+/** Token + userId only — enough to list brands, which is how you find blogId. */
+export function loadAccountCredentials(): { token: string; userId: string } {
+  return {
+    token: requireEnv('METRICOOL_TOKEN', TOKEN_HELP),
+    userId: requireEnv('METRICOOL_USER_ID', USER_ID_HELP),
   };
 }
 
@@ -75,14 +85,7 @@ export class MetricoolClient {
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
     });
 
-    const text = await res.text();
-    let data: T | null = null;
-    try {
-      data = text === '' ? null : (JSON.parse(text) as T);
-    } catch {
-      data = null;
-    }
-    return { ok: res.ok, status: res.status, data, text };
+    return parseResponse<T>(res);
   }
 
   /**
@@ -101,6 +104,30 @@ export class MetricoolClient {
   createPost(payload: unknown): Promise<ApiResponse> {
     return this.request('/v2/scheduler/posts', { method: 'POST', body: payload });
   }
+}
+
+async function parseResponse<T>(res: Response): Promise<ApiResponse<T>> {
+  const text = await res.text();
+  let data: T | null = null;
+  try {
+    data = text === '' ? null : (JSON.parse(text) as T);
+  } catch {
+    data = null;
+  }
+  return { ok: res.ok, status: res.status, data, text };
+}
+
+/**
+ * Lists the brands on the account. Takes only userId — this is how you find the
+ * blogId that every other call needs, so it must not require one itself.
+ */
+export async function listBrands(token: string, userId: string): Promise<ApiResponse> {
+  const url = new URL(`${BASE_URL}/admin/simpleProfiles`);
+  url.searchParams.set('userId', userId);
+  const res = await fetch(url, {
+    headers: { 'X-Mc-Auth': token, Accept: 'application/json' },
+  });
+  return parseResponse(res);
 }
 
 export interface PostPayloadInput {
