@@ -160,18 +160,48 @@ export function resolveLibrary(paths: ProjectPaths, log?: PipelineLogger) {
   return clips;
 }
 
+export interface LibraryRoot {
+  /** The path as it will actually be read. */
+  path: string;
+  exists: boolean;
+  /** What the user typed, when it differs from `path`. */
+  configured: string;
+}
+
 /**
  * Where to look for footage. BROLL_DIR may list several absolute paths
  * separated by `:` — a Google Drive for Desktop folder is just a path, so
  * nothing needs copying into the project.
+ *
+ * Folder names may legitimately begin or end with a space (Finder allows it,
+ * and cloud-synced folders often carry one), so each entry is tried verbatim
+ * first and only then with surrounding whitespace removed. Trimming first
+ * would silently break a real path that ends in a space.
  */
+export function libraryRootsDetailed(): LibraryRoot[] {
+  const configured = process.env['BROLL_DIR'] ?? '';
+  const roots: LibraryRoot[] = [];
+
+  for (const segment of configured.split(':')) {
+    if (segment.trim() === '') continue;
+    if (existsSync(segment)) {
+      roots.push({ path: segment, exists: true, configured: segment });
+    } else if (existsSync(segment.trim())) {
+      roots.push({ path: segment.trim(), exists: true, configured: segment });
+    } else {
+      roots.push({ path: segment, exists: false, configured: segment });
+    }
+  }
+
+  if (existsSync('library')) {
+    roots.push({ path: 'library', exists: true, configured: 'library' });
+  }
+  return roots;
+}
+
+/** Readable roots only — what the render stage actually scans. */
 export function libraryRoots(): string[] {
-  const configured = process.env['BROLL_DIR'];
-  const roots = configured === undefined || configured.trim() === ''
-    ? []
-    : configured.split(':').map((p) => p.trim()).filter((p) => p !== '');
-  roots.push('library');
-  return roots.filter((root) => existsSync(root));
+  return libraryRootsDetailed().filter((root) => root.exists).map((root) => root.path);
 }
 
 /* ------------------------------------------------------------- upload --- */

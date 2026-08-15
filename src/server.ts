@@ -17,6 +17,7 @@ import {
   runSchedule,
   captionFor,
   libraryRoots,
+  libraryRootsDetailed,
   resolveLibrary,
 } from './pipeline.ts';
 import {
@@ -227,7 +228,9 @@ async function handleApi(ctx: Ctx): Promise<unknown> {
   }
 
   if (path === '/api/broll' && method === 'GET') {
-    const roots = libraryRoots();
+    const detailed = libraryRootsDetailed();
+    const roots = detailed.filter((r) => r.exists).map((r) => r.path);
+    const missing = detailed.filter((r) => !r.exists).map((r) => r.configured);
     const clips = roots.flatMap((root) =>
       indexLibrary(root).map((clip) => {
         let sizeMb = 0;
@@ -245,7 +248,7 @@ async function handleApi(ctx: Ctx): Promise<unknown> {
         };
       }),
     );
-    return { roots, clips };
+    return { roots, missing, clips };
   }
 
   if (path === '/api/brands' && method === 'GET') {

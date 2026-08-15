@@ -1,8 +1,11 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { maskSecret, applySettings, metricoolCheck, storageCheck } from '../src/server.ts';
+import { mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { startJob, getJob, resetJobs } from '../src/jobs.ts';
-import { libraryRoots } from '../src/pipeline.ts';
+import { libraryRoots, libraryRootsDetailed } from '../src/pipeline.ts';
 
 beforeEach(() => {
   resetJobs();
@@ -61,6 +64,34 @@ test('library roots drop configured folders that do not exist', () => {
 
 test('library roots accept several colon-separated folders', () => {
   process.env['BROLL_DIR'] = 'library:/nope';
+  assert.deepEqual(libraryRoots(), ['library', 'library']);
+});
+
+test('a missing folder is reported rather than silently dropped', () => {
+  process.env['BROLL_DIR'] = '/definitely/not/here';
+  const detailed = libraryRootsDetailed();
+  const missing = detailed.filter((r) => !r.exists);
+  assert.equal(missing.length, 1);
+  assert.equal(missing[0]?.configured, '/definitely/not/here');
+});
+
+test('a folder whose name really ends in a space is read verbatim', () => {
+  // Finder allows trailing spaces, and cloud-synced folders often carry one.
+  // Trimming before the existence check would silently break such a path.
+  const dir = join(tmpdir(), `reelsmith-space-test-${process.pid} `);
+  mkdirSync(dir, { recursive: true });
+  try {
+    process.env['BROLL_DIR'] = dir;
+    const roots = libraryRootsDetailed();
+    assert.equal(roots[0]?.exists, true);
+    assert.equal(roots[0]?.path, dir, 'the trailing space must survive');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('surrounding whitespace is stripped when the exact path does not exist', () => {
+  process.env['BROLL_DIR'] = '  library  ';
   assert.deepEqual(libraryRoots(), ['library', 'library']);
 });
 

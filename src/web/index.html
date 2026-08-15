@@ -218,8 +218,10 @@
       <div class="card">
         <h3>Footage folder</h3>
         <p class="hint">
-          Full path. Sub-folder names become tags, so <code>.../Luxury Aesthetic broll</code> tags
-          those clips <code>luxury aesthetic broll</code> and they'll match topics mentioning it.
+          In Finder, select the folder and press <b>Option + Command + C</b> — that copies the exact
+          path. Paste it below. Sub-folder names become tags, so
+          <code>.../Luxury Aesthetic broll</code> tags those clips
+          <code>luxury aesthetic broll</code> and they'll match topics mentioning it.
         </p>
         <label>Folder</label>
         <input id="k-BROLL_DIR" placeholder="/Users/you/Library/CloudStorage/GoogleDrive-.../My Drive/..." />
@@ -408,16 +410,27 @@ async function runJob(jobId, target, onDone) {
 
 async function loadClips() {
   try {
-    const { roots, clips } = await api('/api/broll');
+    const { roots, missing, clips } = await api('/api/broll');
+
+    // A mistyped path is by far the likeliest cause of an empty scan — say so
+    // rather than leaving the user staring at a zero.
+    const missingWarn = (missing ?? []).length
+      ? `<div class="banner bad">This folder doesn't exist on disk:<br>
+           ${missing.map((m) => `<code>${esc(m)}</code>`).join('<br>')}
+           <br><br>In Finder, select the folder and press <b>Option + Command + C</b>, then paste —
+           that copies the exact path, including any spaces at the end.</div>`
+      : '';
+
     if (clips.length === 0) {
-      $('clips').innerHTML = `<div class="empty">No clips found in:<br>${roots.map(esc).join('<br>') || '(no folder set)'}</div>`;
+      $('clips').innerHTML = missingWarn +
+        `<div class="empty">No clips found in:<br>${roots.map(esc).join('<br>') || '(no folder set)'}</div>`;
       return;
     }
     const placeholders = clips.filter((c) => c.placeholder).length;
     const warn = placeholders > 0
       ? `<div class="banner">${placeholders} file(s) are Google Drive placeholders that haven't downloaded yet.
          Right-click them in Finder and choose "Make available offline", or they'll be slow to render.</div>` : '';
-    $('clips').innerHTML = warn + `<p class="hint">${clips.length} clip(s) in ${roots.length} folder(s).</p>` +
+    $('clips').innerHTML = missingWarn + warn + `<p class="hint">${clips.length} clip(s) in ${roots.length} folder(s).</p>` +
       clips.map((c) => `<div class="clip">
         <span class="nm">${esc(c.name)}</span>
         <span class="tag">${esc(c.tags.join(' / ') || 'untagged')}</span>
