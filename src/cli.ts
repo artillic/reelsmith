@@ -1,52 +1,42 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
-import { writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadEnv, renderDefaults } from './config.ts';
+import { loadEnv, optionalEnv } from './config.ts';
 import { log, UserError } from './log.ts';
-import { ideate } from './ideate.ts';
-import { buildCaption } from './caption.ts';
-import { planSchedule } from './schedule.ts';
-import { indexLibrary, selectClips, fetchPexelsClips } from './broll.ts';
-import { renderHookCard } from './overlay.ts';
-import { assertFfmpeg, renderVariant, extractCover } from './render.ts';
 import {
   MetricoolClient,
   loadCredentials,
   loadAccountCredentials,
   listBrands,
-  buildPostPayload,
-  trialFieldFromEnv,
-  publicMediaUrl,
 } from './metricool.ts';
 import { runProbe, leafPaths } from './probe.ts';
-import { loadStorageConfig, uploadObject, verifyPubliclyReadable } from './storage.ts';
+import { runIdeate, runRender, runUpload, runSchedule } from './pipeline.ts';
 import {
   projectPaths,
-  ensureProjectDirs,
   slugify,
   readSpec,
-  writeSpec,
   readScheduleManifest,
-  writeScheduleManifest,
   writeRankReport,
 } from './project.ts';
-import type { ReelSpec, ScheduledVariant } from './types.ts';
+import { startServer } from './server.ts';
 
 const USAGE = `
 reelsmith — trial reel pipeline
 
-  reel ideate   --topic "<topic>" [--reasons 24] [--variants 8] [--notes "..."] [--project <dir>]
+  reel dashboard [--port 4000]        everything, in a browser
+
+Or one stage at a time:
+
+  reel ideate   --topic "<topic>" [--reasons 24] [--variants 4] [--notes "..."] [--project <dir>]
   reel render   --project <dir> [--duration 7] [--audio <file>] [--only <hookId>] [--stock]
   reel upload   --project <dir> [--covers]
   reel schedule --project <dir> --timezone <IANA> [--start YYYY-MM-DDTHH:mm] [--gap 240]
-                [--daily-cap 6] [--window 9-21] [--auto-publish] [--dry-run]
+                [--daily-cap 4] [--window 9-21] [--auto-publish] [--dry-run]
   reel brands
   reel probe    [--out probe-dump.json] [--days 30]
   reel rank     --project <dir>
 
-Projects live in content/<slug>/ by default. Every stage writes files; every
-stage can be re-run. Edit spec.json by hand between ideate and render.
+Projects live in content/<slug>/. Every stage writes files and can be re-run.
 `.trim();
 
 async function main(): Promise<void> {
@@ -54,6 +44,8 @@ async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
 
   switch (command) {
+    case 'dashboard':
+      return cmdDashboard(rest);
     case 'ideate':
       return cmdIdeate(rest);
     case 'render':
@@ -79,6 +71,15 @@ async function main(): Promise<void> {
   }
 }
 
+/* ----------------------------------------------------------- dashboard --- */
+
+async function cmdDashboard(argv: string[]): Promise<void> {
+  const { values } = parseArgs({ args: argv, options: { port: { type: 'string', default: '4000' } } });
+  const url = await startServer(intOption(values.port, 'port'));
+  log.step(`reelsmith is running at ${url}`);
+  log.info('Open that in your browser. Press Ctrl+C here when you are done.');
+}
+
 /* -------------------------------------------------------------- ideate --- */
 
 async function cmdIdeate(argv: string[]): Promise<void> {
@@ -87,39 +88,28 @@ async function cmdIdeate(argv: string[]): Promise<void> {
     options: {
       topic: { type: 'string' },
       reasons: { type: 'string', default: '24' },
-      variants: { type: 'string', default: '8' },
+      variants: { type: 'string', default: '4' },
       notes: { type: 'string' },
       project: { type: 'string' },
     },
   });
 
   if (values.topic === undefined) throw new UserError('--topic is required.');
-  const reasonCount = intOption(values.reasons, 'reasons');
-  const variantCount = intOption(values.variants, 'variants');
-
   const slug = slugify(values.topic);
   const paths = projectPaths(values.project ?? join('content', slug));
-  ensureProjectDirs(paths);
 
-  log.step(`Ideating ${variantCount} hook variants and ${reasonCount} reasons`);
-  const draft = await ideate({
-    topic: values.topic,
-    reasonCount,
-    variantCount,
-    notes: values.notes,
-  });
+  await runIdeate(
+    paths,
+    slug,
+    {
+      topic: values.topic,
+      reasonCount: intOption(values.reasons, 'reasons'),
+      variantCount: intOption(values.variants, 'variants'),
+      notes: values.notes,
+    },
+    log,
+  );
 
-  const spec: ReelSpec = { slug, createdAt: new Date().toISOString(), ...draft };
-  writeSpec(paths, spec);
-
-  log.ok(`${spec.reasons.length} reasons, ${spec.hooks.length} hooks -> ${paths.spec}`);
-  if (spec.reasons.length !== reasonCount) {
-    log.warn(`Asked for ${reasonCount} reasons, got ${spec.reasons.length}.`);
-  }
-  if (spec.hooks.length !== variantCount) {
-    log.warn(`Asked for ${variantCount} hooks, got ${spec.hooks.length}.`);
-  }
-  for (const hook of spec.hooks) log.info(`[${hook.angle}] ${hook.text}`);
   log.info('');
   log.info(`Edit ${paths.spec} to taste, then: reel render --project ${paths.root}`);
 }
@@ -139,75 +129,19 @@ async function cmdRender(argv: string[]): Promise<void> {
   });
 
   const paths = projectPaths(requireOption(values.project, 'project'));
-  // Read the spec before creating anything, so a typo'd --project reports a
-  // missing project instead of silently creating an empty one.
   const spec = readSpec(paths);
-  ensureProjectDirs(paths);
 
-  await assertFfmpeg();
-
-  const config = {
-    ...renderDefaults,
-    durationSeconds:
-      values.duration === undefined ? renderDefaults.durationSeconds : Number(values.duration),
-  };
-
-  const hooks =
-    values.only === undefined ? spec.hooks : spec.hooks.filter((h) => h.id === values.only);
-  if (hooks.length === 0) throw new UserError(`No hook matches --only ${values.only}.`);
-
-  if (values.stock === true) {
-    log.step('Fetching stock b-roll from Pexels');
-    const saved = await fetchPexelsClips(spec.topic, hooks.length, paths.broll);
-    log.ok(`${saved.length} clip(s) downloaded to ${paths.broll}`);
-    log.warn('Pexels footage requires attribution. See README.');
-  }
-
-  // Project-local b-roll wins; the shared library is the fallback.
-  const local = indexLibrary(paths.broll);
-  const library = local.length > 0 ? local : indexLibrary('library');
-  const keywords = spec.topic.split(/\s+/);
-  const clips = selectClips(library, keywords, hooks.length);
-
-  log.step(`Rendering ${hooks.length} variant(s) at ${config.width}x${config.height}`);
-  for (const [index, hook] of hooks.entries()) {
-    const clip = clips[index] as (typeof clips)[number];
-    const overlayPath = join(paths.out, `${hook.id}.overlay.png`);
-    const videoPath = join(paths.out, `${hook.id}.mp4`);
-    const coverPath = join(paths.out, `${hook.id}.jpg`);
-
-    await renderHookCard(
-      { text: hook.text, width: config.width, height: config.height },
-      overlayPath,
-    );
-    await renderVariant({
-      brollPath: clip.path,
-      overlayPath,
-      outPath: videoPath,
-      config,
+  await runRender(
+    paths,
+    spec,
+    {
+      durationSeconds: values.duration === undefined ? undefined : Number(values.duration),
       audioPath: values.audio,
-    });
-    await extractCover(videoPath, coverPath, config.coverAtSeconds);
-
-    const caption = buildCaption({
-      hook: hook.text,
-      reasons: spec.reasons,
-      cta: spec.cta,
-      hashtags: spec.hashtags,
-    });
-    writeFileSync(join(paths.captions, `${hook.id}.txt`), caption.text, 'utf8');
-
-    log.ok(`${hook.id}  (${caption.characterCount} chars)`);
-    if (caption.droppedReasons.length > 0) {
-      log.warn(
-        `${caption.droppedReasons.length} reason(s) dropped to fit the 2200-char caption limit: ` +
-          caption.droppedReasons.map((r) => `"${r}"`).join(', '),
-      );
-    }
-    if (caption.droppedHashtags.length > 0) {
-      log.warn(`${caption.droppedHashtags.length} hashtag(s) dropped over the 30-tag limit.`);
-    }
-  }
+      onlyHookId: values.only,
+      useStock: values.stock === true,
+    },
+    log,
+  );
 
   log.info('');
   log.info(`Videos in ${paths.out}, captions in ${paths.captions}`);
@@ -218,54 +152,12 @@ async function cmdRender(argv: string[]): Promise<void> {
 async function cmdUpload(argv: string[]): Promise<void> {
   const { values } = parseArgs({
     args: argv,
-    options: {
-      project: { type: 'string' },
-      covers: { type: 'boolean', default: false },
-    },
+    options: { project: { type: 'string' }, covers: { type: 'boolean', default: false } },
   });
 
   const paths = projectPaths(requireOption(values.project, 'project'));
   const spec = readSpec(paths);
-  const config = loadStorageConfig();
-
-  const files = spec.hooks
-    .flatMap((hook) => {
-      const video = join(paths.out, `${hook.id}.mp4`);
-      const cover = join(paths.out, `${hook.id}.jpg`);
-      return values.covers === true ? [video, cover] : [video];
-    })
-    .filter((file) => existsSync(file));
-
-  if (files.length === 0) {
-    throw new UserError(`No rendered files in ${paths.out}. Run \`reel render\` first.`);
-  }
-
-  log.step(`Uploading ${files.length} file(s) to the "${config.bucket}" bucket`);
-
-  let firstVideoUrl: string | null = null;
-  for (const file of files) {
-    const result = await uploadObject(config, file);
-    if (firstVideoUrl === null && file.endsWith('.mp4')) firstVideoUrl = result.publicUrl;
-    log.ok(`${result.objectName}  (${(result.bytes / 1024 / 1024).toFixed(1)} MB)`);
-  }
-
-  // Trust nothing: confirm the bucket really serves these publicly, because the
-  // failure would otherwise surface at publish time as a silently failed post.
-  if (firstVideoUrl !== null) {
-    log.step('Verifying public access');
-    const check = await verifyPubliclyReadable(firstVideoUrl);
-    if (check.ok) {
-      log.ok(`Publicly readable (${check.detail})`);
-    } else {
-      log.error(`${firstVideoUrl} is not publicly readable: ${check.detail}`);
-      log.info(
-        `Set the "${config.bucket}" bucket to Public in the Supabase dashboard under Storage. ` +
-          'Metricool fetches the video at publish time, so a private bucket means the post fails then.',
-      );
-      process.exitCode = 1;
-      return;
-    }
-  }
+  await runUpload(paths, spec, values.covers === true, log);
 
   log.info('');
   log.info(`Next: reel schedule --project ${paths.root} --timezone <your timezone>`);
@@ -281,7 +173,7 @@ async function cmdSchedule(argv: string[]): Promise<void> {
       timezone: { type: 'string' },
       start: { type: 'string' },
       gap: { type: 'string', default: '240' },
-      'daily-cap': { type: 'string', default: '6' },
+      'daily-cap': { type: 'string', default: '4' },
       window: { type: 'string', default: '9-21' },
       'auto-publish': { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
@@ -290,112 +182,31 @@ async function cmdSchedule(argv: string[]): Promise<void> {
 
   const paths = projectPaths(requireOption(values.project, 'project'));
   const spec = readSpec(paths);
-  const timezone = requireOption(values.timezone, 'timezone');
+  const [windowStartHour, windowEndHour] = parseWindow(values.window ?? '9-21');
   const dryRun = values['dry-run'] === true;
-  const autoPublish = values['auto-publish'] === true;
 
-  const [windowStart, windowEnd] = parseWindow(values.window ?? '9-21');
-  const rendered = spec.hooks.filter((h) => existsSync(join(paths.out, `${h.id}.mp4`)));
-  if (rendered.length === 0) {
-    throw new UserError(`No rendered videos in ${paths.out}. Run \`reel render\` first.`);
-  }
-  if (rendered.length < spec.hooks.length) {
-    log.warn(`${spec.hooks.length - rendered.length} hook(s) have no rendered video and are skipped.`);
-  }
-
-  const times = planSchedule({
-    count: rendered.length,
-    start: values.start ?? defaultStart(),
-    gapMinutes: intOption(values.gap, 'gap'),
-    dailyCap: intOption(values['daily-cap'], 'daily-cap'),
-    windowStartHour: windowStart,
-    windowEndHour: windowEnd,
-  });
-
-  const { field: trialField, value: trialValue } = trialFieldFromEnv();
-  if (trialField === undefined) {
-    log.warn(
-      'METRICOOL_TRIAL_FIELD is not set, so posts are scheduled as ordinary reels. ' +
-        'Run `reel probe` to discover the trial-reel field.',
-    );
-  }
-  if (autoPublish && trialField === undefined) {
-    log.warn('--auto-publish with no trial field means these publish as normal reels, to followers.');
-  }
-
-  log.step(`${dryRun ? 'Planning' : 'Scheduling'} ${rendered.length} post(s) in ${timezone}`);
-
-  const client = dryRun ? null : new MetricoolClient(loadCredentials());
-  const variants: ScheduledVariant[] = [];
-
-  for (const [index, hook] of rendered.entries()) {
-    const publishAt = times[index] as string;
-    const videoPath = join(paths.out, `${hook.id}.mp4`);
-    const caption = buildCaption({
-      hook: hook.text,
-      reasons: spec.reasons,
-      cta: spec.cta,
-      hashtags: spec.hashtags,
-    });
-
-    if (dryRun) {
-      log.ok(`${publishAt}  ${hook.id}  [${hook.angle}]  ${hook.text}`);
-      variants.push({
-        hookId: hook.id,
-        postId: null,
-        publishAt,
-        timezone,
-        autoPublish,
-        raw: null,
-      });
-      continue;
-    }
-
-    const mediaUrl = publicMediaUrl(videoPath);
-    const normalized = await client!.normalizeMedia(mediaUrl);
-    if (!normalized.ok) {
-      throw new UserError(
-        `Metricool could not fetch ${mediaUrl} (${normalized.status}). ` +
-          `Confirm the file is publicly reachable.\n${normalized.text.slice(0, 300)}`,
-      );
-    }
-    const mediaHandle = extractMediaHandle(normalized.data) ?? mediaUrl;
-
-    const payload = buildPostPayload({
-      text: caption.text,
-      publishAt,
-      timezone,
-      media: [mediaHandle],
-      autoPublish,
-      trialField,
-      trialValue,
-    });
-
-    const created = await client!.createPost(payload);
-    if (!created.ok) {
-      throw new UserError(
-        `Scheduling ${hook.id} failed (${created.status}).\n${created.text.slice(0, 500)}`,
-      );
-    }
-
-    const postId = extractPostId(created.data);
-    variants.push({ hookId: hook.id, postId, publishAt, timezone, autoPublish, raw: created.data });
-    log.ok(`${publishAt}  ${hook.id}  -> post ${postId ?? '(id not returned)'}`);
-  }
-
-  writeScheduleManifest(paths, {
-    slug: spec.slug,
-    scheduledAt: new Date().toISOString(),
-    trialReel: trialField !== undefined,
-    variants,
-  });
+  await runSchedule(
+    paths,
+    spec,
+    {
+      timezone: values.timezone ?? optionalEnv('REEL_TIMEZONE') ?? requireOption(undefined, 'timezone'),
+      start: values.start ?? defaultStart(),
+      gapMinutes: intOption(values.gap, 'gap'),
+      dailyCap: intOption(values['daily-cap'], 'daily-cap'),
+      windowStartHour,
+      windowEndHour,
+      autoPublish: values['auto-publish'] === true,
+      dryRun,
+    },
+    log,
+  );
 
   log.info('');
   if (dryRun) {
     log.info('Dry run — nothing was sent to Metricool. Drop --dry-run to schedule.');
   } else {
-    log.info(`Manifest written to ${paths.schedule}. After the posts run: reel rank --project ${paths.root}`);
-    if (!autoPublish) {
+    log.info(`Manifest written to ${paths.schedule}.`);
+    if (values['auto-publish'] !== true) {
       log.info('Posts were created as drafts. Approve them in the Metricool Planner.');
     }
   }
@@ -439,10 +250,7 @@ async function cmdBrands(): Promise<void> {
 async function cmdProbe(argv: string[]): Promise<void> {
   const { values } = parseArgs({
     args: argv,
-    options: {
-      out: { type: 'string', default: 'probe-dump.json' },
-      days: { type: 'string', default: '30' },
-    },
+    options: { out: { type: 'string', default: 'probe-dump.json' }, days: { type: 'string', default: '30' } },
   });
   await runProbe(values.out ?? 'probe-dump.json', intOption(values.days, 'days'));
 }
@@ -452,10 +260,7 @@ async function cmdProbe(argv: string[]): Promise<void> {
 const METRIC_KEYS = /(view|play|reach|impression|like|comment|share|save|engagement)/i;
 
 async function cmdRank(argv: string[]): Promise<void> {
-  const { values } = parseArgs({
-    args: argv,
-    options: { project: { type: 'string' } },
-  });
+  const { values } = parseArgs({ args: argv, options: { project: { type: 'string' } } });
 
   const paths = projectPaths(requireOption(values.project, 'project'));
   const spec = readSpec(paths);
@@ -493,18 +298,13 @@ async function cmdRank(argv: string[]): Promise<void> {
   const measured = rows.filter((r) => Object.keys(r.metrics).length > 0);
   if (measured.length === 0) {
     log.warn('No engagement metrics were present in the response.');
-    log.info(
-      `The raw payload is in ${paths.rank}. If metrics live under a different key, ` +
-        'the ranking heuristic in cmdRank needs that key added.',
-    );
+    log.info(`The raw payload is in ${paths.rank}.`);
     return;
   }
 
   log.ok(`Ranked ${measured.length} of ${rows.length} variant(s):`);
   for (const [i, row] of rows.entries()) {
-    const detail = Object.entries(row.metrics)
-      .map(([k, v]) => `${k}=${v}`)
-      .join(' ');
+    const detail = Object.entries(row.metrics).map(([k, v]) => `${k}=${v}`).join(' ');
     log.info(`${i + 1}. [${row.angle ?? '?'}] ${row.text ?? row.hookId}  ${detail}`);
   }
   if (measured.length < rows.length) {
@@ -528,16 +328,16 @@ function indexPostsById(data: unknown): Map<string, unknown> {
   const list = Array.isArray(data)
     ? data
     : typeof data === 'object' && data !== null && Array.isArray((data as { data?: unknown }).data)
-      ? ((data as { data: unknown[] }).data)
+      ? (data as { data: unknown[] }).data
       : [];
   for (const item of list) {
-    const id = extractPostId(item);
+    const id = extractPostIdLocal(item);
     if (id !== null) map.set(id, item);
   }
   return map;
 }
 
-function extractPostId(data: unknown): string | null {
+function extractPostIdLocal(data: unknown): string | null {
   if (typeof data !== 'object' || data === null) return null;
   const record = data as Record<string, unknown>;
   for (const key of ['id', 'postId', 'uuid']) {
@@ -545,19 +345,7 @@ function extractPostId(data: unknown): string | null {
     if (typeof value === 'string' || typeof value === 'number') return String(value);
   }
   const nested = record['data'];
-  return nested === undefined ? null : extractPostId(nested);
-}
-
-function extractMediaHandle(data: unknown): string | null {
-  if (typeof data === 'string') return data;
-  if (typeof data !== 'object' || data === null) return null;
-  const record = data as Record<string, unknown>;
-  for (const key of ['url', 'mediaId', 'id', 'normalizedUrl']) {
-    const value = record[key];
-    if (typeof value === 'string') return value;
-  }
-  const nested = record['data'];
-  return nested === undefined ? null : extractMediaHandle(nested);
+  return nested === undefined ? null : extractPostIdLocal(nested);
 }
 
 function requireOption(value: string | undefined, name: string): string {

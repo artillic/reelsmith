@@ -11,7 +11,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && cp -R src/web dist/src/web",
+    "dashboard": "node --experimental-strip-types src/cli.ts dashboard",
     "reel": "node --experimental-strip-types src/cli.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --experimental-strip-types --test test/*.test.ts",

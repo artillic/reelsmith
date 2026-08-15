@@ -1,0 +1,351 @@
+import { writeFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { renderDefaults, type RenderConfig } from './config.ts';
+import { UserError } from './log.ts';
+import { ideate } from './ideate.ts';
+import { buildCaption } from './caption.ts';
+import { planSchedule } from './schedule.ts';
+import { indexLibrary, selectClips, fetchPexelsClips } from './broll.ts';
+import { renderHookCard } from './overlay.ts';
+import { assertFfmpeg, renderVariant, extractCover } from './render.ts';
+import { loadStorageConfig, uploadObject, verifyPubliclyReadable } from './storage.ts';
+import {
+  MetricoolClient,
+  loadCredentials,
+  buildPostPayload,
+  trialFieldFromEnv,
+  publicMediaUrl,
+} from './metricool.ts';
+import { ensureProjectDirs, writeSpec, writeScheduleManifest, type ProjectPaths } from './project.ts';
+import type { ReelSpec, ScheduleManifest, ScheduledVariant } from './types.ts';
+
+/**
+ * The pipeline stages, independent of how they are driven. The CLI passes its
+ * console logger; the dashboard passes one that appends to a job's log buffer.
+ * Both therefore run the exact same code — the browser is a second front end,
+ * not a second implementation.
+ */
+export interface PipelineLogger {
+  step(message: string): void;
+  info(message: string): void;
+  ok(message: string): void;
+  warn(message: string): void;
+}
+
+/* ------------------------------------------------------------- ideate --- */
+
+export interface IdeateStageOptions {
+  topic: string;
+  reasonCount: number;
+  variantCount: number;
+  notes?: string | undefined;
+}
+
+export async function runIdeate(
+  paths: ProjectPaths,
+  slug: string,
+  opts: IdeateStageOptions,
+  log: PipelineLogger,
+): Promise<ReelSpec> {
+  ensureProjectDirs(paths);
+  log.step(`Ideating ${opts.variantCount} hook variants and ${opts.reasonCount} reasons`);
+
+  const draft = await ideate(opts);
+  const spec: ReelSpec = { slug, createdAt: new Date().toISOString(), ...draft };
+  writeSpec(paths, spec);
+
+  log.ok(`${spec.reasons.length} reasons, ${spec.hooks.length} hooks`);
+  if (spec.reasons.length !== opts.reasonCount) {
+    log.warn(`Asked for ${opts.reasonCount} reasons, got ${spec.reasons.length}.`);
+  }
+  if (spec.hooks.length !== opts.variantCount) {
+    log.warn(`Asked for ${opts.variantCount} hooks, got ${spec.hooks.length}.`);
+  }
+  for (const hook of spec.hooks) log.info(`[${hook.angle}] ${hook.text}`);
+  return spec;
+}
+
+/* ------------------------------------------------------------- render --- */
+
+export interface RenderStageOptions {
+  durationSeconds?: number | undefined;
+  audioPath?: string | undefined;
+  onlyHookId?: string | undefined;
+  useStock?: boolean;
+}
+
+export function captionFor(spec: ReelSpec, hookText: string) {
+  return buildCaption({
+    hook: hookText,
+    reasons: spec.reasons,
+    cta: spec.cta,
+    hashtags: spec.hashtags,
+  });
+}
+
+export async function runRender(
+  paths: ProjectPaths,
+  spec: ReelSpec,
+  opts: RenderStageOptions,
+  log: PipelineLogger,
+): Promise<void> {
+  ensureProjectDirs(paths);
+  await assertFfmpeg();
+
+  const config: RenderConfig = {
+    ...renderDefaults,
+    ...(opts.durationSeconds === undefined ? {} : { durationSeconds: opts.durationSeconds }),
+  };
+
+  const hooks =
+    opts.onlyHookId === undefined ? spec.hooks : spec.hooks.filter((h) => h.id === opts.onlyHookId);
+  if (hooks.length === 0) throw new UserError(`No hook matches "${opts.onlyHookId}".`);
+
+  if (opts.useStock === true) {
+    log.step('Fetching stock b-roll from Pexels');
+    const saved = await fetchPexelsClips(spec.topic, hooks.length, paths.broll);
+    log.ok(`${saved.length} clip(s) downloaded`);
+    log.warn('Pexels footage requires attribution.');
+  }
+
+  const library = resolveLibrary(paths, log);
+  const clips = selectClips(library, spec.topic.split(/\s+/), hooks.length);
+
+  log.step(`Rendering ${hooks.length} variant(s) at ${config.width}x${config.height}`);
+  for (const [index, hook] of hooks.entries()) {
+    const clip = clips[index] as (typeof clips)[number];
+    const overlayPath = join(paths.out, `${hook.id}.overlay.png`);
+    const videoPath = join(paths.out, `${hook.id}.mp4`);
+    const coverPath = join(paths.out, `${hook.id}.jpg`);
+
+    await renderHookCard(
+      { text: hook.text, width: config.width, height: config.height },
+      overlayPath,
+    );
+    await renderVariant({
+      brollPath: clip.path,
+      overlayPath,
+      outPath: videoPath,
+      config,
+      audioPath: opts.audioPath,
+    });
+    await extractCover(videoPath, coverPath, config.coverAtSeconds);
+
+    const caption = captionFor(spec, hook.text);
+    writeFileSync(join(paths.captions, `${hook.id}.txt`), caption.text, 'utf8');
+
+    log.ok(`${hook.id}  (${caption.characterCount} chars)`);
+    if (caption.droppedReasons.length > 0) {
+      log.warn(
+        `${caption.droppedReasons.length} reason(s) dropped to fit the 2200-char limit: ` +
+          caption.droppedReasons.map((r) => `"${r}"`).join(', '),
+      );
+    }
+    if (caption.droppedHashtags.length > 0) {
+      log.warn(`${caption.droppedHashtags.length} hashtag(s) dropped over the 30-tag limit.`);
+    }
+  }
+}
+
+/** Project-local b-roll wins; then any configured library roots. */
+export function resolveLibrary(paths: ProjectPaths, log?: PipelineLogger) {
+  const local = indexLibrary(paths.broll);
+  if (local.length > 0) return local;
+
+  const roots = libraryRoots();
+  const clips = roots.flatMap((root) => indexLibrary(root));
+  if (clips.length === 0 && log !== undefined) {
+    log.warn(`No clips found in: ${roots.join(', ') || '(no library configured)'}`);
+  }
+  return clips;
+}
+
+/**
+ * Where to look for footage. BROLL_DIR may list several absolute paths
+ * separated by `:` — a Google Drive for Desktop folder is just a path, so
+ * nothing needs copying into the project.
+ */
+export function libraryRoots(): string[] {
+  const configured = process.env['BROLL_DIR'];
+  const roots = configured === undefined || configured.trim() === ''
+    ? []
+    : configured.split(':').map((p) => p.trim()).filter((p) => p !== '');
+  roots.push('library');
+  return roots.filter((root) => existsSync(root));
+}
+
+/* ------------------------------------------------------------- upload --- */
+
+export async function runUpload(
+  paths: ProjectPaths,
+  spec: ReelSpec,
+  includeCovers: boolean,
+  log: PipelineLogger,
+): Promise<void> {
+  const config = loadStorageConfig();
+  const files = spec.hooks
+    .flatMap((hook) => {
+      const video = join(paths.out, `${hook.id}.mp4`);
+      const cover = join(paths.out, `${hook.id}.jpg`);
+      return includeCovers ? [video, cover] : [video];
+    })
+    .filter((file) => existsSync(file));
+
+  if (files.length === 0) throw new UserError('No rendered files to upload. Render first.');
+
+  log.step(`Uploading ${files.length} file(s) to the "${config.bucket}" bucket`);
+  let firstVideoUrl: string | null = null;
+  for (const file of files) {
+    const result = await uploadObject(config, file);
+    if (firstVideoUrl === null && file.endsWith('.mp4')) firstVideoUrl = result.publicUrl;
+    log.ok(`${result.objectName}  (${(result.bytes / 1024 / 1024).toFixed(1)} MB)`);
+  }
+
+  if (firstVideoUrl !== null) {
+    log.step('Verifying public access');
+    const check = await verifyPubliclyReadable(firstVideoUrl);
+    if (!check.ok) {
+      throw new UserError(
+        `${firstVideoUrl} is not publicly readable: ${check.detail}\n` +
+          `Set the "${config.bucket}" bucket to Public in Supabase > Storage. Metricool fetches ` +
+          'the video at publish time, so a private bucket means the post fails then.',
+      );
+    }
+    log.ok(`Publicly readable (${check.detail})`);
+  }
+}
+
+/* ----------------------------------------------------------- schedule --- */
+
+export interface ScheduleStageOptions {
+  timezone: string;
+  start: string;
+  gapMinutes: number;
+  dailyCap: number;
+  windowStartHour: number;
+  windowEndHour: number;
+  autoPublish: boolean;
+  dryRun: boolean;
+}
+
+export async function runSchedule(
+  paths: ProjectPaths,
+  spec: ReelSpec,
+  opts: ScheduleStageOptions,
+  log: PipelineLogger,
+): Promise<ScheduleManifest> {
+  const rendered = spec.hooks.filter((h) => existsSync(join(paths.out, `${h.id}.mp4`)));
+  if (rendered.length === 0) throw new UserError('No rendered videos. Render first.');
+  if (rendered.length < spec.hooks.length) {
+    log.warn(`${spec.hooks.length - rendered.length} hook(s) have no video and are skipped.`);
+  }
+
+  const times = planSchedule({
+    count: rendered.length,
+    start: opts.start,
+    gapMinutes: opts.gapMinutes,
+    dailyCap: opts.dailyCap,
+    windowStartHour: opts.windowStartHour,
+    windowEndHour: opts.windowEndHour,
+  });
+
+  const { field: trialField, value: trialValue } = trialFieldFromEnv();
+  if (trialField === undefined) {
+    log.warn('No trial-reel field configured — these schedule as ordinary reels.');
+  }
+
+  log.step(`${opts.dryRun ? 'Planning' : 'Scheduling'} ${rendered.length} post(s) in ${opts.timezone}`);
+
+  const client = opts.dryRun ? null : new MetricoolClient(loadCredentials());
+  const variants: ScheduledVariant[] = [];
+
+  for (const [index, hook] of rendered.entries()) {
+    const publishAt = times[index] as string;
+    const caption = captionFor(spec, hook.text);
+
+    if (opts.dryRun) {
+      log.ok(`${publishAt}  [${hook.angle}]  ${hook.text}`);
+      variants.push({
+        hookId: hook.id,
+        postId: null,
+        publishAt,
+        timezone: opts.timezone,
+        autoPublish: opts.autoPublish,
+        raw: null,
+      });
+      continue;
+    }
+
+    const mediaUrl = publicMediaUrl(join(paths.out, `${hook.id}.mp4`));
+    const normalized = await client!.normalizeMedia(mediaUrl);
+    if (!normalized.ok) {
+      throw new UserError(
+        `Metricool could not fetch ${mediaUrl} (${normalized.status}). ` +
+          `Confirm the file is publicly reachable.\n${normalized.text.slice(0, 300)}`,
+      );
+    }
+    const mediaHandle = extractMediaHandle(normalized.data) ?? mediaUrl;
+
+    const created = await client!.createPost(
+      buildPostPayload({
+        text: caption.text,
+        publishAt,
+        timezone: opts.timezone,
+        media: [mediaHandle],
+        autoPublish: opts.autoPublish,
+        trialField,
+        trialValue,
+      }),
+    );
+    if (!created.ok) {
+      throw new UserError(
+        `Scheduling "${hook.text}" failed (${created.status}).\n${created.text.slice(0, 500)}`,
+      );
+    }
+
+    const postId = extractPostId(created.data);
+    variants.push({
+      hookId: hook.id,
+      postId,
+      publishAt,
+      timezone: opts.timezone,
+      autoPublish: opts.autoPublish,
+      raw: created.data,
+    });
+    log.ok(`${publishAt}  ${hook.id} -> post ${postId ?? '(no id returned)'}`);
+  }
+
+  const manifest: ScheduleManifest = {
+    slug: spec.slug,
+    scheduledAt: new Date().toISOString(),
+    trialReel: trialField !== undefined,
+    variants,
+  };
+  if (!opts.dryRun) writeScheduleManifest(paths, manifest);
+  return manifest;
+}
+
+/* ------------------------------------------------------------ helpers --- */
+
+export function extractPostId(data: unknown): string | null {
+  if (typeof data !== 'object' || data === null) return null;
+  const record = data as Record<string, unknown>;
+  for (const key of ['id', 'postId', 'uuid']) {
+    const value = record[key];
+    if (typeof value === 'string' || typeof value === 'number') return String(value);
+  }
+  const nested = record['data'];
+  return nested === undefined ? null : extractPostId(nested);
+}
+
+export function extractMediaHandle(data: unknown): string | null {
+  if (typeof data === 'string') return data;
+  if (typeof data !== 'object' || data === null) return null;
+  const record = data as Record<string, unknown>;
+  for (const key of ['url', 'mediaId', 'id', 'normalizedUrl']) {
+    const value = record[key];
+    if (typeof value === 'string') return value;
+  }
+  const nested = record['data'];
+  return nested === undefined ? null : extractMediaHandle(nested);
+}

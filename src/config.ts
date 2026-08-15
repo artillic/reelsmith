@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { UserError } from './log.ts';
 
@@ -25,6 +25,39 @@ export function loadEnv(cwd = process.cwd()): void {
       value = value.slice(1, -1);
     }
     process.env[key] = value;
+  }
+}
+
+/**
+ * Rewrites .env in place, preserving comments and key order. Existing keys are
+ * updated where they sit; new ones are appended. Values are applied to
+ * process.env too, so a running dashboard picks them up without a restart.
+ */
+export function updateEnvFile(updates: Record<string, string>, cwd = process.cwd()): void {
+  const path = resolve(cwd, '.env');
+  const existing = existsSync(path) ? readFileSync(path, 'utf8').split('\n') : [];
+  const remaining = new Map(Object.entries(updates));
+
+  const lines = existing.map((rawLine) => {
+    const trimmed = rawLine.trim();
+    if (trimmed === '' || trimmed.startsWith('#')) return rawLine;
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) return rawLine;
+    const key = trimmed.slice(0, eq).trim();
+    if (!remaining.has(key)) return rawLine;
+    const value = remaining.get(key) as string;
+    remaining.delete(key);
+    return `${key}=${value}`;
+  });
+
+  for (const [key, value] of remaining) lines.push(`${key}=${value}`);
+
+  const text = lines.join('\n');
+  writeFileSync(path, text.endsWith('\n') ? text : `${text}\n`, 'utf8');
+
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === '') delete process.env[key];
+    else process.env[key] = value;
   }
 }
 

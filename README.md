@@ -75,6 +75,28 @@ Metricool credentials:
 `reel brands` needs only the token and user id, so fill those two first and let
 it tell you the blog id.
 
+## The dashboard
+
+```sh
+npm install
+npm run dashboard
+```
+
+Open `http://localhost:4000`. Everything happens there — keys, b-roll folder,
+topic, hook review, video previews, caption editing, scheduling. Five screens,
+left to right, in the order you use them.
+
+The server binds to loopback only. It writes `.env` and can publish posts, so it
+must never be reachable from the network.
+
+Point the **B-roll** screen at any folder of vertical clips, including a Google
+Drive for Desktop folder — those are ordinary files on disk, so nothing is
+copied or re-uploaded. Sub-folder names become tags and are matched against the
+topic.
+
+Everything below is the same pipeline from a terminal, for when you want to
+script it.
+
 ## The loop
 
 ```sh
