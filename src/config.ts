@@ -33,6 +33,17 @@ export function loadEnv(cwd = process.cwd()): void {
  * updated where they sit; new ones are appended. Values are applied to
  * process.env too, so a running dashboard picks them up without a restart.
  */
+/**
+ * Values are quoted when they carry leading or trailing whitespace, which
+ * `loadEnv` strips before it looks for quotes. Without this a folder whose name
+ * genuinely ends in a space — common in cloud-synced drives — silently loses
+ * that space the moment it round-trips through .env.
+ */
+function encodeEnvValue(value: string): string {
+  const needsQuotes = value !== value.trim() || value.includes('#');
+  return needsQuotes ? `"${value.replace(/"/g, '\\"')}"` : value;
+}
+
 export function updateEnvFile(updates: Record<string, string>, cwd = process.cwd()): void {
   const path = resolve(cwd, '.env');
   const existing = existsSync(path) ? readFileSync(path, 'utf8').split('\n') : [];
@@ -47,10 +58,10 @@ export function updateEnvFile(updates: Record<string, string>, cwd = process.cwd
     if (!remaining.has(key)) return rawLine;
     const value = remaining.get(key) as string;
     remaining.delete(key);
-    return `${key}=${value}`;
+    return `${key}=${encodeEnvValue(value)}`;
   });
 
-  for (const [key, value] of remaining) lines.push(`${key}=${value}`);
+  for (const [key, value] of remaining) lines.push(`${key}=${encodeEnvValue(value)}`);
 
   const text = lines.join('\n');
   writeFileSync(path, text.endsWith('\n') ? text : `${text}\n`, 'utf8');

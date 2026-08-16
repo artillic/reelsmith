@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadEnv, optionalEnv } from './config.ts';
 import { log, UserError } from './log.ts';
@@ -27,7 +28,8 @@ reelsmith — trial reel pipeline
 
 Or one stage at a time:
 
-  reel ideate   --topic "<topic>" [--reasons 24] [--variants 4] [--notes "..."] [--project <dir>]
+  reel ideate   --hook "22 reasons to move to Thailand" --caption caption.txt
+                [--variants 4] [--topic "thailand luxury"] [--notes "..."] [--project <dir>]
   reel render   --project <dir> [--duration 7] [--audio <file>] [--only <hookId>] [--stock]
   reel upload   --project <dir> [--covers]
   reel schedule --project <dir> --timezone <IANA> [--start YYYY-MM-DDTHH:mm] [--gap 240]
@@ -86,24 +88,32 @@ async function cmdIdeate(argv: string[]): Promise<void> {
   const { values } = parseArgs({
     args: argv,
     options: {
+      hook: { type: 'string' },
+      caption: { type: 'string' },
       topic: { type: 'string' },
-      reasons: { type: 'string', default: '24' },
       variants: { type: 'string', default: '4' },
       notes: { type: 'string' },
       project: { type: 'string' },
     },
   });
 
-  if (values.topic === undefined) throw new UserError('--topic is required.');
-  const slug = slugify(values.topic);
+  const seedHook = requireOption(values.hook, 'hook');
+  const captionFile = requireOption(values.caption, 'caption');
+  if (!existsSync(captionFile)) {
+    throw new UserError(`No caption file at ${captionFile}. --caption takes a path to a text file.`);
+  }
+  const caption = readFileSync(captionFile, 'utf8');
+
+  const slug = slugify(seedHook);
   const paths = projectPaths(values.project ?? join('content', slug));
 
   await runIdeate(
     paths,
     slug,
     {
-      topic: values.topic,
-      reasonCount: intOption(values.reasons, 'reasons'),
+      topic: values.topic ?? seedHook,
+      seedHook,
+      caption,
       variantCount: intOption(values.variants, 'variants'),
       notes: values.notes,
     },
@@ -112,6 +122,7 @@ async function cmdIdeate(argv: string[]): Promise<void> {
 
   log.info('');
   log.info(`Edit ${paths.spec} to taste, then: reel render --project ${paths.root}`);
+  log.info('Set a hook\'s "brollPath" in that file to choose its clip by hand.');
 }
 
 /* -------------------------------------------------------------- render --- */
@@ -284,7 +295,7 @@ async function cmdRank(argv: string[]): Promise<void> {
     const metrics = post === undefined ? {} : extractMetrics(post);
     return {
       hookId: variant.hookId,
-      angle: hook?.angle ?? null,
+      variation: hook?.variation ?? null,
       text: hook?.text ?? null,
       publishAt: variant.publishAt,
       metrics,
@@ -305,7 +316,7 @@ async function cmdRank(argv: string[]): Promise<void> {
   log.ok(`Ranked ${measured.length} of ${rows.length} variant(s):`);
   for (const [i, row] of rows.entries()) {
     const detail = Object.entries(row.metrics).map(([k, v]) => `${k}=${v}`).join(' ');
-    log.info(`${i + 1}. [${row.angle ?? '?'}] ${row.text ?? row.hookId}  ${detail}`);
+    log.info(`${i + 1}. ${row.text ?? row.hookId}  (${row.variation ?? '?'})  ${detail}`);
   }
   if (measured.length < rows.length) {
     log.warn(`${rows.length - measured.length} variant(s) had no metrics and rank last by default.`);

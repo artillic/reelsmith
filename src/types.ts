@@ -1,32 +1,42 @@
-/** The angle a hook takes. Trial reels test hooks, so variants must differ in kind, not wording. */
-export type HookAngle =
-  | 'number-led'
-  | 'contrarian'
-  | 'curiosity-gap'
-  | 'second-person'
-  | 'loss-framing'
-  | 'status'
-  | 'concrete-detail'
-  | 'comparison';
-
 export interface HookVariant {
   /** Stable within a project. Used for filenames and performance ranking. */
   id: string;
   /** Burned into the video. Short — it has to read in under a second. */
   text: string;
-  angle: HookAngle;
+  /**
+   * What this variant changes relative to the seed hook, e.g.
+   * "audience: entrepreneurs". A label for reading the results later, not a
+   * category the generator picks from.
+   */
+  variation: string;
+  /**
+   * Which clip to render this hook over. null means pick automatically.
+   * Chosen in the dashboard, so the same hook can be retried on new footage.
+   */
+  brollPath?: string | null;
 }
 
 export interface ReelSpec {
   slug: string;
   topic: string;
   createdAt: string;
-  /** The numbered list that becomes the caption body. */
-  reasons: string[];
+  /**
+   * The caption, written by the author and posted verbatim. This is the
+   * deliberate design: the list is the author's voice and the tool must not
+   * rewrite it. `reasons` remains only for specs created before captions were
+   * authored directly.
+   */
+  caption: string;
+  /** The hook every variant is a rewrite of. */
+  seedHook: string;
   hooks: HookVariant[];
-  hashtags: string[];
-  /** Optional closing line before the hashtags. */
-  cta: string | null;
+
+  /** @deprecated Superseded by `caption`; kept so older projects still load. */
+  reasons?: string[];
+  /** @deprecated Part of the old assembled-caption path. */
+  hashtags?: string[];
+  /** @deprecated Part of the old assembled-caption path. */
+  cta?: string | null;
 }
 
 export interface BrollClip {

@@ -1,9 +1,9 @@
 import { writeFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { renderDefaults, type RenderConfig } from './config.ts';
 import { UserError } from './log.ts';
-import { ideate } from './ideate.ts';
-import { buildCaption } from './caption.ts';
+import { generateHookVariants } from './ideate.ts';
+import { buildCaption, checkCaption } from './caption.ts';
 import { planSchedule } from './schedule.ts';
 import { indexLibrary, selectClips, fetchPexelsClips } from './broll.ts';
 import { renderHookCard } from './overlay.ts';
@@ -35,8 +35,12 @@ export interface PipelineLogger {
 /* ------------------------------------------------------------- ideate --- */
 
 export interface IdeateStageOptions {
+  /** Used only for naming the project and matching b-roll tags. */
   topic: string;
-  reasonCount: number;
+  /** The author's hook. Kept as variant one. */
+  seedHook: string;
+  /** The author's caption, posted verbatim on every variant. */
+  caption: string;
   variantCount: number;
   notes?: string | undefined;
 }
@@ -48,20 +52,28 @@ export async function runIdeate(
   log: PipelineLogger,
 ): Promise<ReelSpec> {
   ensureProjectDirs(paths);
-  log.step(`Ideating ${opts.variantCount} hook variants and ${opts.reasonCount} reasons`);
+  log.step(`Writing ${opts.variantCount} variations of "${opts.seedHook}"`);
 
-  const draft = await ideate(opts);
-  const spec: ReelSpec = { slug, createdAt: new Date().toISOString(), ...draft };
+  const hooks = await generateHookVariants({
+    seedHook: opts.seedHook,
+    caption: opts.caption,
+    count: opts.variantCount,
+    notes: opts.notes,
+  });
+
+  const spec: ReelSpec = {
+    slug,
+    topic: opts.topic,
+    createdAt: new Date().toISOString(),
+    caption: opts.caption,
+    seedHook: opts.seedHook,
+    hooks,
+  };
   writeSpec(paths, spec);
 
-  log.ok(`${spec.reasons.length} reasons, ${spec.hooks.length} hooks`);
-  if (spec.reasons.length !== opts.reasonCount) {
-    log.warn(`Asked for ${opts.reasonCount} reasons, got ${spec.reasons.length}.`);
-  }
-  if (spec.hooks.length !== opts.variantCount) {
-    log.warn(`Asked for ${opts.variantCount} hooks, got ${spec.hooks.length}.`);
-  }
-  for (const hook of spec.hooks) log.info(`[${hook.angle}] ${hook.text}`);
+  log.ok(`${hooks.length} hook(s), including your original`);
+  for (const hook of hooks) log.info(`${hook.text}   — ${hook.variation}`);
+  for (const problem of checkCaption(opts.caption).problems) log.warn(problem);
   return spec;
 }
 
@@ -74,13 +86,22 @@ export interface RenderStageOptions {
   useStock?: boolean;
 }
 
-export function captionFor(spec: ReelSpec, hookText: string) {
-  return buildCaption({
+/**
+ * The caption is authored, not assembled — the same text goes on every variant,
+ * because the hook is the only thing under test. `buildCaption` is still used
+ * for projects created before captions were written directly.
+ */
+export function captionFor(spec: ReelSpec, hookText: string): { text: string; characterCount: number } {
+  if (typeof spec.caption === 'string' && spec.caption.trim() !== '') {
+    return { text: spec.caption, characterCount: spec.caption.length };
+  }
+  const built = buildCaption({
     hook: hookText,
-    reasons: spec.reasons,
-    cta: spec.cta,
-    hashtags: spec.hashtags,
+    reasons: spec.reasons ?? [],
+    cta: spec.cta ?? null,
+    hashtags: spec.hashtags ?? [],
   });
+  return { text: built.text, characterCount: built.characterCount };
 }
 
 export async function runRender(
@@ -108,12 +129,18 @@ export async function runRender(
     log.warn('Pexels footage requires attribution.');
   }
 
+  // Hooks with a clip chosen in the dashboard keep it; the rest are filled in
+  // automatically, so picking is optional but always wins when used.
+  const needAuto = hooks.filter((hook) => !hasChosenClip(hook));
   const library = resolveLibrary(paths, log);
-  const clips = selectClips(library, spec.topic.split(/\s+/), hooks.length);
+  const auto = needAuto.length > 0 ? selectClips(library, spec.topic.split(/\s+/), needAuto.length) : [];
+  let autoIndex = 0;
 
   log.step(`Rendering ${hooks.length} variant(s) at ${config.width}x${config.height}`);
-  for (const [index, hook] of hooks.entries()) {
-    const clip = clips[index] as (typeof clips)[number];
+  for (const hook of hooks) {
+    const clip = hasChosenClip(hook)
+      ? { path: hook.brollPath as string, tags: [] }
+      : (auto[autoIndex++] as { path: string; tags: string[] });
     const overlayPath = join(paths.out, `${hook.id}.overlay.png`);
     const videoPath = join(paths.out, `${hook.id}.mp4`);
     const coverPath = join(paths.out, `${hook.id}.jpg`);
@@ -134,17 +161,13 @@ export async function runRender(
     const caption = captionFor(spec, hook.text);
     writeFileSync(join(paths.captions, `${hook.id}.txt`), caption.text, 'utf8');
 
-    log.ok(`${hook.id}  (${caption.characterCount} chars)`);
-    if (caption.droppedReasons.length > 0) {
-      log.warn(
-        `${caption.droppedReasons.length} reason(s) dropped to fit the 2200-char limit: ` +
-          caption.droppedReasons.map((r) => `"${r}"`).join(', '),
-      );
-    }
-    if (caption.droppedHashtags.length > 0) {
-      log.warn(`${caption.droppedHashtags.length} hashtag(s) dropped over the 30-tag limit.`);
-    }
+    log.ok(`${hook.id} — ${basename(clip.path)}`);
+    for (const problem of checkCaption(caption.text).problems) log.warn(problem);
   }
+}
+
+function hasChosenClip(hook: { brollPath?: string | null }): boolean {
+  return typeof hook.brollPath === 'string' && hook.brollPath !== '' && existsSync(hook.brollPath);
 }
 
 /** Project-local b-roll wins; then any configured library roots. */
@@ -294,7 +317,7 @@ export async function runSchedule(
     const caption = captionFor(spec, hook.text);
 
     if (opts.dryRun) {
-      log.ok(`${publishAt}  [${hook.angle}]  ${hook.text}`);
+      log.ok(`${publishAt}  ${hook.text}   — ${hook.variation}`);
       variants.push({
         hookId: hook.id,
         postId: null,

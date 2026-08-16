@@ -239,21 +239,33 @@
     <!-- --------------------------------------------------------- create -->
     <section id="s-create">
       <h2>New reel</h2>
-      <p class="sub">One topic becomes a list of reasons plus several hooks, each testing a different angle.</p>
+      <p class="sub">You write the caption and the hook. The tool writes close variations of that hook to test.</p>
 
       <div class="card">
-        <label>Topic</label>
-        <input id="topic" placeholder="move to Thailand" />
-        <div class="row-3">
-          <div><label>Reasons</label><input id="reasonCount" type="number" value="24" min="3" max="60" /></div>
-          <div><label>Hook variants</label><input id="variantCount" type="number" value="4" min="1" max="20" /></div>
-          <div></div>
+        <h3>Your caption</h3>
+        <p class="hint">Posted exactly as written on every variant. Nothing is rewritten or trimmed.</p>
+        <textarea id="caption" rows="14" placeholder="1. $10,000 lifestyle for $2,000/mo&#10;2. Every building has a pool gym and sauna&#10;3. Unlimited sun&#10;..."></textarea>
+        <span class="count" id="caption-live"></span>
+      </div>
+
+      <div class="card">
+        <h3>Your hook</h3>
+        <p class="hint">
+          The text burned onto the video. Variations keep this exact shape and change one thing —
+          who it's for, what it's for, the life stage.
+        </p>
+        <label>Hook</label>
+        <input id="seedHook" placeholder="22 reasons to move to Thailand" />
+        <div class="row">
+          <div><label>How many variations</label><input id="variantCount" type="number" value="4" min="1" max="20" /></div>
+          <div><label>Topic for b-roll matching (optional)</label><input id="topic" placeholder="thailand luxury" /></div>
         </div>
         <label>Extra direction (optional)</label>
-        <textarea id="notes" placeholder="Keep it aimed at people in finance jobs in London..."></textarea>
+        <textarea id="notes" rows="3" placeholder="Aim some of them at people working corporate jobs in London"></textarea>
         <div class="actions">
-          <button class="btn" id="btn-ideate">Generate</button>
+          <button class="btn" id="btn-ideate">Write the variations</button>
         </div>
+        <p class="hint" style="margin-top:10px">Your original hook is always kept as variant one, so it's in the test too.</p>
         <div id="ideate-log"></div>
       </div>
 
@@ -329,8 +341,8 @@ function show(id) {
   for (const btn of document.querySelectorAll('nav button')) {
     btn.classList.toggle('active', btn.dataset.go === id);
   }
-  if (id === 'broll') loadClips();
-  if (id === 'review') renderReview();
+  if (id === 'broll') { clipCache = null; loadClips(); }
+  if (id === 'review') void renderReview();
   if (id === 'publish') renderPublish();
 }
 
@@ -455,7 +467,7 @@ function renderProjects() {
     </div>`).join('');
   $('projects').onclick = async (e) => {
     const btn = e.target.closest('[data-open]');
-    if (btn) { await openProject(btn.dataset.open); show('review'); }
+    if (btn) { await openProject(btn.dataset.open); await renderReview(); show('review'); }
   };
 }
 
@@ -466,14 +478,32 @@ async function openProject(slug) {
 
 /* -------------------------------------------------------------- review -- */
 
-function renderReview() {
+let clipCache = null;
+
+async function clipOptions() {
+  if (clipCache === null) {
+    try {
+      clipCache = (await api('/api/broll')).clips;
+    } catch { clipCache = []; }
+  }
+  return clipCache;
+}
+
+async function renderReview() {
   if (!current) return;
-  const { spec, variants } = current;
+  const { spec, variants, captionCheck } = current;
+  const clips = await clipOptions();
+
+  const problems = (captionCheck && captionCheck.problems) || [];
 
   $('review-body').innerHTML = `
+    ${problems.length ? `<div class="banner bad">${problems.map(esc).join('<br>')}</div>` : ''}
     <div class="card">
-      <h3>${esc(spec.topic)}</h3>
-      <p class="hint">${variants.length} hook variant(s). Each gets its own video and the same caption.</p>
+      <h3>${esc(spec.seedHook || spec.topic)}</h3>
+      <p class="hint">
+        ${variants.length} variant(s). Same caption and same length on each — the hook and the
+        footage are the only things that change.
+      </p>
       <div id="variants"></div>
       <div class="actions">
         <button class="btn" id="btn-render">Make the videos</button>
@@ -485,18 +515,20 @@ function renderReview() {
 
     <div class="card">
       <h3>Caption</h3>
-      <p class="hint">One reason per line. This same caption goes on every variant — the hook is the thing being tested.</p>
-      <label>Reasons</label>
-      <textarea id="reasons" rows="12">${esc(spec.reasons.join('\n'))}</textarea>
-      <label>Closing line</label>
-      <input id="cta" value="${esc(spec.cta ?? '')}" />
-      <label>Hashtags (space separated, no #)</label>
-      <input id="hashtags" value="${esc(spec.hashtags.join(' '))}" />
+      <p class="hint">Yours, posted exactly as written. Same on every variant.</p>
+      <textarea id="caption-edit" rows="14">${esc(spec.caption ?? '')}</textarea>
       <div class="actions">
         <button class="btn ghost" id="btn-save-caption">Save caption</button>
         <span class="count" id="caption-count"></span>
       </div>
     </div>`;
+
+  const clipSelect = (index, chosen) => `
+    <select data-clip="${index}">
+      <option value="">Pick automatically</option>
+      ${clips.map((c) => `<option value="${esc(c.path)}" ${c.path === chosen ? 'selected' : ''}>
+        ${esc(c.name)}${c.tags.length ? ' — ' + esc(c.tags.join('/')) : ''}</option>`).join('')}
+    </select>`;
 
   $('variants').innerHTML = variants.map((v, i) => `
     <div class="card variant">
@@ -504,9 +536,11 @@ function renderReview() {
         ? `<video src="${esc(v.videoUrl)}" controls preload="metadata" poster="${esc(v.coverUrl)}"></video>`
         : `<div class="placeholder">not made yet</div>`}
       <div>
-        <span class="tag">${esc(v.angle)}</span>
+        <span class="tag">${esc(v.variation || v.angle || 'variant')}</span>
         <label>Hook (burned onto the video)</label>
         <input data-hook="${i}" value="${esc(v.text)}" />
+        <label>B-roll clip</label>
+        ${clipSelect(i, v.brollPath || '')}
         <div class="actions">
           <button class="btn danger" data-del="${i}">Remove this variant</button>
         </div>
@@ -514,8 +548,12 @@ function renderReview() {
     </div>`).join('');
 
   $('variants').oninput = (e) => {
-    const el = e.target.closest('[data-hook]');
-    if (el) current.spec.hooks[Number(el.dataset.hook)].text = el.value;
+    const hookEl = e.target.closest('[data-hook]');
+    if (hookEl) current.spec.hooks[Number(hookEl.dataset.hook)].text = hookEl.value;
+  };
+  $('variants').onchange = (e) => {
+    const clipEl = e.target.closest('[data-clip]');
+    if (clipEl) current.spec.hooks[Number(clipEl.dataset.clip)].brollPath = clipEl.value || null;
   };
   $('variants').onclick = (e) => {
     const el = e.target.closest('[data-del]');
@@ -532,27 +570,22 @@ function renderReview() {
     await saveSpec($('spec-msg'));
     const { jobId } = await api('/api/render', { method: 'POST', body: { slug: current.slug } });
     $('btn-render').disabled = true;
-    await runJob(jobId, $('render-log'), async () => { await openProject(current.slug); renderReview(); });
+    await runJob(jobId, $('render-log'), async () => { await openProject(current.slug); await renderReview(); });
     $('btn-render').disabled = false;
   };
 
   const updateCount = () => {
-    const reasons = $('reasons').value.split('\n').filter((r) => r.trim() !== '');
-    const total = reasons.join('\n').length + $('cta').value.length + $('hashtags').value.length + 40;
-    $('caption-count').className = 'count' + (total > 2200 ? ' over' : '');
-    $('caption-count').textContent = `~${total} / 2200 characters`;
+    const len = $('caption-edit').value.length;
+    $('caption-count').className = 'count' + (len > 2200 ? ' over' : '');
+    $('caption-count').textContent = `${len} / 2200 characters`;
   };
-  for (const id of ['reasons', 'cta', 'hashtags']) $(id).oninput = updateCount;
+  $('caption-edit').oninput = updateCount;
   updateCount();
 }
 
 async function saveSpec(msgEl) {
   const spec = { ...current.spec };
-  if ($('reasons')) {
-    spec.reasons = $('reasons').value.split('\n').map((r) => r.trim()).filter((r) => r !== '');
-    spec.cta = $('cta').value.trim() || null;
-    spec.hashtags = $('hashtags').value.split(/[\s,]+/).map((t) => t.replace(/^#/, '')).filter(Boolean);
-  }
+  if ($('caption-edit')) spec.caption = $('caption-edit').value;
   try {
     if (msgEl) msgEl.textContent = 'Saving...';
     await api('/api/projects/' + current.slug, { method: 'PUT', body: { spec } });
@@ -687,16 +720,27 @@ $('btn-probe').onclick = async () => {
   }
 };
 
+$('caption').oninput = () => {
+  const len = $('caption').value.length;
+  $('caption-live').className = 'count' + (len > 2200 ? ' over' : '');
+  $('caption-live').textContent = `${len} / 2200 characters`;
+};
+
 $('btn-ideate').onclick = async () => {
-  const topic = $('topic').value.trim();
-  if (!topic) return;
+  const seedHook = $('seedHook').value.trim();
+  const caption = $('caption').value;
+  if (!seedHook || !caption.trim()) {
+    $('ideate-log').innerHTML = '<div class="banner bad">Write your caption and your hook first.</div>';
+    return;
+  }
   $('btn-ideate').disabled = true;
   try {
     const { jobId, slug } = await api('/api/ideate', {
       method: 'POST',
       body: {
-        topic,
-        reasonCount: Number($('reasonCount').value),
+        seedHook,
+        caption,
+        topic: $('topic').value.trim(),
         variantCount: Number($('variantCount').value),
         notes: $('notes').value,
       },

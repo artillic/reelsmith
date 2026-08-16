@@ -1,18 +1,32 @@
 # reelsmith
 
-Automates the trial-reel loop: one list of reasons becomes N hook variants, each
-rendered over different b-roll, staggered onto the Metricool calendar, and then
-ranked by how cold audiences actually responded.
+You write the caption and one hook. The tool writes close variations of that
+hook, renders each over b-roll, staggers them onto the Metricool calendar, and
+ranks them by how cold audiences actually responded.
 
 The point is not "make a reel faster". Trial reels only show to non-followers,
 which makes them an A/B test rig. The hook is the variable; everything else is
 held constant. This tool exists to run that test at volume and read the result.
 
+Two consequences of that, both deliberate:
+
+**The caption is yours and is posted verbatim.** It is the same on every
+variant, because a caption that changes alongside the hook makes the test
+meaningless. Nothing is rewritten, reordered or trimmed — an over-long caption
+is reported, not repaired.
+
+**Variants keep the hook's shape.** From `22 reasons to move to Thailand` you
+get `22 reasons why Thailand is the best place to start a business` and
+`22 reasons why you should move to Thailand while you're young` — same number,
+same skeleton, one thing changed. You do not get a contrarian rewrite or a
+question, because those test the format rather than the framing. Your original
+hook is always kept as variant one, so it is in the test too.
+
 ## Status
 
 | Stage | State |
 |---|---|
-| 1. Ideation (hook variants + reasons) | Working |
+| 1. Hook variations from your seed hook | Working |
 | 2. B-roll selection (local library + Pexels) | Working |
 | 3. Render (vertical video, burned-in hook, cover frame) | Working |
 | 4. Caption assembly (Instagram limits enforced) | Working |
@@ -103,11 +117,11 @@ script it.
 # 0. Confirm the credentials work and find your brand id.
 npm run reel -- brands
 
-# 1. Draft the list and the hook variants. Writes content/<slug>/spec.json.
-npm run reel -- ideate --topic "move to Thailand" --reasons 24 --variants 8
+# 1. Write your caption to a file, then generate hook variations.
+npm run reel -- ideate --hook "22 reasons to move to Thailand" --caption caption.txt --variants 4
 
-# 2. Read spec.json. Cut the weak hooks, fix the reasons. This is the one step
-#    that stays human — the model drafts, you decide what ships.
+# 2. Read spec.json. Cut the variants you wouldn't post. Set a hook's
+#    "brollPath" to choose its clip by hand; leave it null to pick automatically.
 
 # 3. Render one vertical mp4 + cover + caption per surviving hook.
 npm run reel -- render --project content/move-to-thailand

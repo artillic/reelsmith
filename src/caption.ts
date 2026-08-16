@@ -24,6 +24,37 @@ export interface CaptionResult {
   characterCount: number;
 }
 
+export interface CaptionCheck {
+  text: string;
+  characterCount: number;
+  hashtagCount: number;
+  /** Problems the author should see before publishing. Never auto-corrected. */
+  problems: string[];
+}
+
+/**
+ * Checks an author-written caption without touching it. The caption is the
+ * author's voice, so this reports rather than repairs — silently trimming
+ * someone's copy to fit a limit is worse than telling them it will be rejected.
+ */
+export function checkCaption(text: string): CaptionCheck {
+  const hashtagCount = (text.match(/(^|\s)#[\p{L}\p{N}_]+/gu) ?? []).length;
+  const problems: string[] = [];
+
+  if (text.trim() === '') problems.push('The caption is empty.');
+  if (text.length > IG_CAPTION_LIMIT) {
+    problems.push(
+      `${text.length} characters — Instagram allows ${IG_CAPTION_LIMIT}. ` +
+        `Remove about ${text.length - IG_CAPTION_LIMIT}.`,
+    );
+  }
+  if (hashtagCount > IG_HASHTAG_LIMIT) {
+    problems.push(`${hashtagCount} hashtags — Instagram allows ${IG_HASHTAG_LIMIT}.`);
+  }
+
+  return { text, characterCount: text.length, hashtagCount, problems };
+}
+
 export function normalizeHashtag(raw: string): string {
   const cleaned = raw.trim().replace(/^#+/, '').replace(/[^\p{L}\p{N}_]/gu, '');
   return cleaned === '' ? '' : `#${cleaned}`;

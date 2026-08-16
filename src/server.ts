@@ -3,6 +3,7 @@ import { readFileSync, existsSync, readdirSync, statSync, createReadStream } fro
 import { join, resolve, basename, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { updateEnvFile, optionalEnv } from './config.ts';
+import { checkCaption } from './caption.ts';
 import { UserError } from './log.ts';
 import { assertFfmpeg } from './render.ts';
 import { indexLibrary } from './broll.ts';
@@ -240,6 +241,8 @@ async function handleApi(ctx: Ctx): Promise<unknown> {
           /* a cloud placeholder may not stat */
         }
         return {
+          // The full path is what a hook stores when a clip is picked by hand.
+          path: clip.path,
           name: basename(clip.path),
           tags: clip.tags,
           sizeMb: Number(sizeMb.toFixed(1)),
@@ -285,17 +288,24 @@ async function handleApi(ctx: Ctx): Promise<unknown> {
   }
 
   if (path === '/api/ideate' && method === 'POST') {
-    const topic = String(body['topic'] ?? '').trim();
-    if (topic === '') throw new UserError('Enter a topic first.');
-    const slug = slugify(topic);
+    const seedHook = String(body['seedHook'] ?? '').trim();
+    const caption = String(body['caption'] ?? '');
+    if (seedHook === '') throw new UserError('Write your hook first.');
+    if (caption.trim() === '') throw new UserError('Paste your caption first.');
+
+    // The hook names the project, since that is what the author recognises.
+    const topic = String(body['topic'] ?? '').trim() || seedHook;
+    const slug = slugify(seedHook);
     const paths = projectPaths(join(CONTENT_ROOT, slug));
-    const job = startJob(`Generating ideas for "${topic}"`, async (log) => {
+
+    const job = startJob(`Writing variations of "${seedHook}"`, async (log) => {
       await runIdeate(
         paths,
         slug,
         {
           topic,
-          reasonCount: Number(body['reasonCount'] ?? 24),
+          seedHook,
+          caption,
           variantCount: Number(body['variantCount'] ?? 4),
           notes: typeof body['notes'] === 'string' ? body['notes'] : undefined,
         },
@@ -312,20 +322,16 @@ async function handleApi(ctx: Ctx): Promise<unknown> {
     const { paths, spec } = projectFor(slug);
 
     if (method === 'GET') {
+      const caption = captionFor(spec, spec.seedHook ?? '');
       return {
-        spec,
-        variants: spec.hooks.map((hook) => {
-          const caption = captionFor(spec, hook.text);
-          return {
-            ...hook,
-            rendered: existsSync(join(paths.out, `${hook.id}.mp4`)),
-            videoUrl: `/media/${slug}/${hook.id}.mp4`,
-            coverUrl: `/media/${slug}/${hook.id}.jpg`,
-            caption: caption.text,
-            captionLength: caption.characterCount,
-            droppedReasons: caption.droppedReasons,
-          };
-        }),
+        spec: { ...spec, caption: caption.text },
+        captionCheck: checkCaption(caption.text),
+        variants: spec.hooks.map((hook) => ({
+          ...hook,
+          rendered: existsSync(join(paths.out, `${hook.id}.mp4`)),
+          videoUrl: `/media/${slug}/${hook.id}.mp4`,
+          coverUrl: `/media/${slug}/${hook.id}.jpg`,
+        })),
       };
     }
 

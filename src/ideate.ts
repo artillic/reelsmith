@@ -3,77 +3,76 @@ import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import { requireEnv } from './config.ts';
 import { UserError } from './log.ts';
-import type { HookAngle, ReelSpec } from './types.ts';
+import type { HookVariant } from './types.ts';
 
 const MODEL = 'claude-opus-5';
 
-const ANGLES: HookAngle[] = [
-  'number-led',
-  'contrarian',
-  'curiosity-gap',
-  'second-person',
-  'loss-framing',
-  'status',
-  'concrete-detail',
-  'comparison',
-];
-
 /**
- * No length/count constraints in the schema: structured outputs reject most
+ * No length or count constraints in the schema: structured outputs reject most
  * JSON-Schema constraints, and the SDK would otherwise strip them and enforce
  * them client-side, turning a soft miss into a hard parse failure. Counts are
  * asked for in the prompt and checked after.
  */
-const IdeationSchema = z.object({
-  reasons: z
-    .array(z.string())
-    .describe('The numbered list for the caption. Each item is one concrete, specific claim.'),
-  hooks: z
+const VariantSchema = z.object({
+  variants: z
     .array(
       z.object({
-        id: z.string().describe('Short kebab-case identifier, unique within the response.'),
-        text: z.string().describe('The on-screen hook. Must read in about one second.'),
-        angle: z.enum(ANGLES as [HookAngle, ...HookAngle[]]),
+        text: z.string().describe('The rewritten hook, in the same shape as the seed.'),
+        variation: z
+          .string()
+          .describe('Two or three words naming what changed, e.g. "audience: entrepreneurs".'),
       }),
     )
-    .describe('Hook variants that differ in angle, not in wording.'),
-  hashtags: z.array(z.string()).describe('Hashtags without the leading # character.'),
-  cta: z.string().describe('One short closing line for the caption. May be empty.'),
+    .describe('Rewrites of the seed hook.'),
 });
 
-export interface IdeateOptions {
-  topic: string;
-  reasonCount: number;
-  variantCount: number;
-  /** Extra steer from the user, passed through verbatim. */
-  notes?: string;
+export interface HookVariantOptions {
+  /** The hook the author wrote. Every variant is a rewrite of this one. */
+  seedHook: string;
+  /** The author's caption, for context on what the list actually delivers. */
+  caption: string;
+  count: number;
+  notes?: string | undefined;
 }
 
 function systemPrompt(): string {
   return [
-    'You write short-form vertical video content for Instagram trial reels.',
+    'You rewrite a single Instagram hook into close variations for A/B testing.',
     '',
-    'A trial reel is shown only to non-followers, so its single job is to test whether a hook',
-    'stops a cold viewer. The caption is a numbered list that pays off the hook.',
+    'These go on trial reels, which are shown only to non-followers. The caption and the',
+    'footage are held constant, so the hook is the only variable under test. That only works',
+    'if the variants are genuinely comparable.',
     '',
-    'Requirements:',
-    '- Every reason is concrete and specific. Prices, numbers, named things. No vague benefits.',
-    '- Every reason stands alone. The reader is skimming, not reading a paragraph.',
-    '- Hook variants must differ in ANGLE, not in phrasing. Two hooks that say the same thing',
-    '  with different words are one hook and waste a test slot.',
-    '- Hooks are short enough to read in about one second at a glance.',
-    '- No emoji in hooks. No hashtags in hooks. No clickbait that the list does not deliver on.',
-    '- Write in plain language. Do not pad with filler adjectives.',
+    'Rules:',
+    '- Keep the seed hook\'s SHAPE. If it opens with a number, every variant opens with the',
+    '  same number. If it is a "N reasons ..." hook, every variant is a "N reasons ..." hook.',
+    '- Change ONE thing per variant: who it is for, what it is for, the life stage, the',
+    '  timeframe, or the specific claim. Never change the format.',
+    '- Do NOT invent different creative angles. Do not write a contrarian version, a',
+    '  question version, or a shock version. Small, plausible, same-family rewrites only.',
+    '- Every variant must still be honestly delivered by the caption you are given.',
+    '- No emoji. No hashtags. No quotation marks around the hook.',
+    '- Short enough to read at a glance.',
+    '',
+    'Good example. Seed: "22 reasons to move to Thailand"',
+    '  22 reasons why Thailand is the best place to start a business',
+    '  22 reasons why you should move to Thailand while you are young',
+    '  22 reasons to move to Thailand before you turn 30',
+    'Bad example (these change the format and are useless as a test):',
+    '  Why is everyone moving to Thailand?',
+    '  Nobody tells you this about Thailand',
   ].join('\n');
 }
 
-function userPrompt(opts: IdeateOptions): string {
+function userPrompt(opts: HookVariantOptions): string {
   const parts = [
-    `Topic: ${opts.topic}`,
+    `Seed hook: ${opts.seedHook}`,
     '',
-    `Produce exactly ${opts.reasonCount} reasons and exactly ${opts.variantCount} hook variants.`,
-    `Use a different angle for each hook variant where the angle list allows it.`,
-    'Also produce up to 30 relevant hashtags (no leading #) and one short closing line.',
+    'The caption these hooks must pay off:',
+    opts.caption.slice(0, 4000),
+    '',
+    `Write exactly ${opts.count} variants of the seed hook.`,
+    'Do not include the seed hook itself in the list.',
   ];
   if (opts.notes !== undefined && opts.notes.trim() !== '') {
     parts.push('', 'Additional direction from the author:', opts.notes.trim());
@@ -81,67 +80,78 @@ function userPrompt(opts: IdeateOptions): string {
   return parts.join('\n');
 }
 
-export async function ideate(opts: IdeateOptions): Promise<Omit<ReelSpec, 'slug' | 'createdAt'>> {
+export async function generateHookVariants(opts: HookVariantOptions): Promise<HookVariant[]> {
   requireEnv(
     'ANTHROPIC_API_KEY',
-    'Ideation calls the Claude API. Create a key at https://console.anthropic.com/.',
+    'Generating hook variants calls the Claude API. Create a key at https://console.anthropic.com/.',
   );
-  const client = new Anthropic();
+  if (opts.seedHook.trim() === '') throw new UserError('Write a hook to base the variants on.');
+  if (opts.caption.trim() === '') throw new UserError('Paste your caption first.');
 
+  const client = new Anthropic();
   const response = await client.messages.parse({
     model: MODEL,
-    max_tokens: 16000,
+    max_tokens: 8000,
     // Thinking is on by default on Claude Opus 5; stated explicitly so the
     // max_tokens headroom above is obviously deliberate.
     thinking: { type: 'adaptive' },
     system: systemPrompt(),
     messages: [{ role: 'user', content: userPrompt(opts) }],
-    output_config: { format: zodOutputFormat(IdeationSchema) },
+    output_config: { format: zodOutputFormat(VariantSchema) },
   });
 
   if (response.stop_reason === 'refusal') {
     throw new UserError(
-      `The model declined this topic (${response.stop_details?.category ?? 'no category given'}). ` +
-        'Rephrase the topic and try again.',
+      `The model declined this hook (${response.stop_details?.category ?? 'no category given'}). ` +
+        'Rephrase and try again.',
     );
   }
   if (response.stop_reason === 'max_tokens') {
-    throw new UserError(
-      'The model hit the token limit before finishing. Ask for fewer reasons or fewer variants.',
-    );
+    throw new UserError('The model ran out of room. Ask for fewer variants.');
   }
 
   const parsed = response.parsed_output;
   if (parsed === null || parsed === undefined) {
-    throw new UserError('The model returned no structured output. Re-run the command.');
+    throw new UserError('The model returned no structured output. Try again.');
   }
 
-  const reasons = parsed.reasons.map((r) => r.trim()).filter((r) => r !== '');
-  const hooks = dedupeHookIds(
-    parsed.hooks
-      .map((h) => ({ id: h.id.trim(), text: h.text.trim(), angle: h.angle }))
-      .filter((h) => h.text !== ''),
-  );
-
-  if (reasons.length === 0) throw new UserError('The model returned no reasons.');
-  if (hooks.length === 0) throw new UserError('The model returned no hooks.');
-
-  return {
-    topic: opts.topic,
-    reasons,
-    hooks,
-    hashtags: parsed.hashtags.map((t) => t.trim()).filter((t) => t !== ''),
-    cta: parsed.cta.trim() === '' ? null : parsed.cta.trim(),
+  // The seed is always variant one, so the author's own wording is in the test.
+  const seed: HookVariant = {
+    id: 'seed',
+    text: opts.seedHook.trim(),
+    variation: 'your original',
+    brollPath: null,
   };
+
+  const variants = parsed.variants
+    .map((variant) => ({
+      text: variant.text.trim(),
+      variation: variant.variation.trim(),
+    }))
+    .filter((variant) => variant.text !== '' && variant.text !== seed.text);
+
+  if (variants.length === 0) throw new UserError('The model returned no usable variants.');
+
+  return [seed, ...withIds(variants)];
 }
 
-/** Hook ids become filenames, so collisions have to be resolved rather than tolerated. */
-function dedupeHookIds<T extends { id: string }>(hooks: T[]): T[] {
+/** Ids become filenames, so collisions have to be resolved rather than tolerated. */
+function withIds(variants: { text: string; variation: string }[]): HookVariant[] {
   const seen = new Map<string, number>();
-  return hooks.map((hook, index) => {
-    const base = hook.id.replace(/[^a-z0-9-]/gi, '-').toLowerCase() || `hook-${index + 1}`;
+  return variants.map((variant, index) => {
+    const base =
+      variant.variation
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 30) || `variant-${index + 1}`;
     const count = seen.get(base) ?? 0;
     seen.set(base, count + 1);
-    return count === 0 ? { ...hook, id: base } : { ...hook, id: `${base}-${count + 1}` };
+    return {
+      id: count === 0 ? base : `${base}-${count + 1}`,
+      text: variant.text,
+      variation: variant.variation,
+      brollPath: null,
+    };
   });
 }
