@@ -109,3 +109,44 @@ test('a corrupt state file is treated as empty rather than fatal', () => {
   writeFileSync(join(paths.root, 'state.json'), '{not json');
   assert.deepEqual(readState(paths), { variants: {} });
 });
+
+test('a stale variant is excluded from publishing, not merely warned about', async () => {
+  const { partitionVariants } = await import('../src/pipeline.ts');
+  render('the original hook');
+
+  const spec2: ReelSpec = {
+    slug: 'p', topic: 't', createdAt: 'x', caption: 'c', seedHook: 's',
+    // The hook text was edited after the video was made.
+    hooks: [{ id: 'h', text: 'an edited hook', variation: 'v', brollPath: null }],
+  };
+  const parts = partitionVariants(paths, spec2);
+  assert.equal(parts.current.length, 0, 'a stale variant must not be publishable');
+  assert.equal(parts.stale.length, 1);
+  assert.equal(parts.stale[0]?.id, 'h');
+});
+
+test('an unedited variant remains publishable', async () => {
+  const { partitionVariants } = await import('../src/pipeline.ts');
+  render('the original hook', '/clips/a.mp4');
+
+  const spec2: ReelSpec = {
+    slug: 'p', topic: 't', createdAt: 'x', caption: 'c', seedHook: 's',
+    brollPool: ['/clips/a.mp4'],
+    hooks: [{ id: 'h', text: 'the original hook', variation: 'v', brollPath: null }],
+  };
+  const parts = partitionVariants(paths, spec2);
+  assert.equal(parts.stale.length, 0);
+  assert.equal(parts.current.length, 1);
+});
+
+test('a hook with no video is counted as missing, not stale', async () => {
+  const { partitionVariants } = await import('../src/pipeline.ts');
+  const spec2: ReelSpec = {
+    slug: 'p', topic: 't', createdAt: 'x', caption: 'c', seedHook: 's',
+    hooks: [{ id: 'never-made', text: 'x', variation: 'v', brollPath: null }],
+  };
+  const parts = partitionVariants(paths, spec2);
+  assert.equal(parts.missing.length, 1);
+  assert.equal(parts.stale.length, 0);
+  assert.equal(parts.current.length, 0);
+});

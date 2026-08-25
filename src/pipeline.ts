@@ -17,7 +17,7 @@ import {
   publicMediaUrl,
 } from './metricool.ts';
 import { ensureProjectDirs, writeSpec, writeScheduleManifest, type ProjectPaths } from './project.ts';
-import { recordRender, readState, updateVariant } from './state.ts';
+import { recordRender, readState, updateVariant, stalenessReasons } from './state.ts';
 import type { ReelSpec, ScheduleManifest, ScheduledVariant, HookVariant } from './types.ts';
 
 /**
@@ -291,7 +291,12 @@ export async function runUpload(
   log: PipelineLogger,
 ): Promise<void> {
   const config = loadStorageConfig();
-  const files = spec.hooks
+  const { current, stale } = partitionVariants(paths, spec);
+  for (const hook of stale) {
+    log.warn(`Not uploading "${hook.text}" — the video no longer matches its hook.`);
+  }
+
+  const files = current
     .flatMap((hook) => {
       const video = join(paths.out, `${hook.id}.mp4`);
       const cover = join(paths.out, `${hook.id}.jpg`);
@@ -299,14 +304,20 @@ export async function runUpload(
     })
     .filter((file) => existsSync(file));
 
-  if (files.length === 0) throw new UserError('No rendered files to upload. Render first.');
+  if (files.length === 0) {
+    throw new UserError(
+      stale.length > 0
+        ? 'Every video is out of date with its hook. Re-make them in Review first.'
+        : 'No rendered files to upload. Make the videos first.',
+    );
+  }
 
   log.step(`Uploading ${files.length} file(s) to the "${config.bucket}" bucket`);
   const state = readState(paths);
-  let firstVideoUrl: string | null = null;
+  const uploadedVideos: string[] = [];
   for (const file of files) {
     const result = await uploadObject(config, file);
-    if (firstVideoUrl === null && file.endsWith('.mp4')) firstVideoUrl = result.publicUrl;
+    if (file.endsWith('.mp4')) uploadedVideos.push(result.publicUrl);
 
     if (file.endsWith('.mp4')) {
       const hookId = basename(file, '.mp4');
@@ -321,18 +332,61 @@ export async function runUpload(
     log.ok(`${result.objectName}  (${(result.bytes / 1024 / 1024).toFixed(1)} MB)`);
   }
 
-  if (firstVideoUrl !== null) {
-    log.step('Verifying public access');
-    const check = await verifyPubliclyReadable(firstVideoUrl);
-    if (!check.ok) {
-      throw new UserError(
-        `${firstVideoUrl} is not publicly readable: ${check.detail}\n` +
-          `Set the "${config.bucket}" bucket to Public in Supabase > Storage. Metricool fetches ` +
-          'the video at publish time, so a private bucket means the post fails then.',
-      );
+  // Every video is checked, not just the first: Metricool fetches each one
+  // separately at publish time, so one unreachable file is one failed post.
+  log.step(`Verifying all ${uploadedVideos.length} video(s) are publicly readable`);
+  const unreachable: string[] = [];
+  for (const url of uploadedVideos) {
+    const check = await verifyPubliclyReadable(url);
+    if (check.ok) log.ok(`${basename(url)} — ${check.detail}`);
+    else {
+      unreachable.push(`${basename(url)}: ${check.detail}`);
+      log.warn(`${basename(url)} is NOT readable — ${check.detail}`);
     }
-    log.ok(`Publicly readable (${check.detail})`);
   }
+  if (unreachable.length > 0) {
+    throw new UserError(
+      `${unreachable.length} of ${uploadedVideos.length} uploaded video(s) are not publicly ` +
+        `readable:\n${unreachable.join('\n')}\n\n` +
+        `Set the "${config.bucket}" bucket to Public in Supabase > Storage. Metricool fetches ` +
+        'each video at publish time, so these would fail hours from now with no warning.',
+    );
+  }
+  log.ok(`Done. ${uploadedVideos.length} video(s) uploaded and reachable.`);
+}
+
+/**
+ * Splits a project's hooks into what can be published, what is out of date with
+ * its hook, and what was never made. Stale variants must never reach Metricool:
+ * the whole test is "which hook won", so a video showing a hook the author has
+ * since rewritten is worse than no data at all.
+ */
+export function partitionVariants(
+  paths: ProjectPaths,
+  spec: ReelSpec,
+): { current: HookVariant[]; stale: HookVariant[]; missing: HookVariant[] } {
+  const state = readState(paths);
+  const assignment = assignClips(paths, spec, spec.hooks);
+
+  const current: HookVariant[] = [];
+  const stale: HookVariant[] = [];
+  const missing: HookVariant[] = [];
+
+  for (const hook of spec.hooks) {
+    if (!existsSync(join(paths.out, `${hook.id}.mp4`))) {
+      missing.push(hook);
+      continue;
+    }
+    const reasons = stalenessReasons(
+      spec,
+      hook,
+      state.variants[hook.id] ?? {},
+      assignment.get(hook.id) ?? null,
+    );
+    if (reasons.length > 0) stale.push(hook);
+    else current.push(hook);
+  }
+  return { current, stale, missing };
 }
 
 /* ----------------------------------------------------------- schedule --- */
@@ -354,10 +408,22 @@ export async function runSchedule(
   opts: ScheduleStageOptions,
   log: PipelineLogger,
 ): Promise<ScheduleManifest> {
-  const rendered = spec.hooks.filter((h) => existsSync(join(paths.out, `${h.id}.mp4`)));
-  if (rendered.length === 0) throw new UserError('No rendered videos. Render first.');
-  if (rendered.length < spec.hooks.length) {
-    log.warn(`${spec.hooks.length - rendered.length} hook(s) have no video and are skipped.`);
+  const { current: rendered, stale, missing } = partitionVariants(paths, spec);
+
+  if (missing.length > 0) {
+    log.warn(`${missing.length} hook(s) have no video and are skipped.`);
+  }
+  // Publishing a video whose hook has since been edited would test a hook the
+  // viewer never sees. The UI claims these are skipped, so they must be.
+  for (const hook of stale) {
+    log.warn(`Skipped "${hook.text}" — the video no longer matches it. Re-make it first.`);
+  }
+  if (rendered.length === 0) {
+    throw new UserError(
+      stale.length > 0
+        ? 'Every video is out of date with its hook. Re-make them in Review first.'
+        : 'No rendered videos. Make the videos first.',
+    );
   }
 
   const times = planSchedule({
