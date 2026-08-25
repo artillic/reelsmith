@@ -17,7 +17,7 @@ import {
   publicMediaUrl,
 } from './metricool.ts';
 import { ensureProjectDirs, writeSpec, writeScheduleManifest, type ProjectPaths } from './project.ts';
-import type { ReelSpec, ScheduleManifest, ScheduledVariant } from './types.ts';
+import type { ReelSpec, ScheduleManifest, ScheduledVariant, HookVariant } from './types.ts';
 
 /**
  * The pipeline stages, independent of how they are driven. The CLI passes its
@@ -131,23 +131,13 @@ export async function runRender(
     log.warn('Pexels footage requires attribution.');
   }
 
-  // Three sources, most specific first: a clip pinned to this hook, then the
-  // project's chosen pool, then tag matching across the whole library.
-  const pool = (spec.brollPool ?? []).filter((path) => existsSync(path));
-  const needAuto = hooks.filter((hook) => !hasChosenClip(hook));
-  const auto =
-    pool.length > 0
-      ? needAuto.map((_, i) => ({ path: pool[i % pool.length] as string, tags: [] }))
-      : needAuto.length > 0
-        ? selectClips(resolveLibrary(paths, log), spec.topic.split(/\s+/), needAuto.length)
-        : [];
-  let autoIndex = 0;
+  const assignment = assignClips(paths, spec, hooks, log);
 
   log.step(`Rendering ${hooks.length} variant(s) at ${config.width}x${config.height}`);
   for (const hook of hooks) {
-    const clip = hasChosenClip(hook)
-      ? { path: hook.brollPath as string, tags: [] }
-      : (auto[autoIndex++] as { path: string; tags: string[] });
+    const clipPath = assignment.get(hook.id);
+    if (clipPath === undefined) throw new UserError(`No b-roll available for "${hook.text}".`);
+    const clip = { path: clipPath };
     const overlayPath = join(paths.out, `${hook.id}.overlay.png`);
     const videoPath = join(paths.out, `${hook.id}.mp4`);
     const coverPath = join(paths.out, `${hook.id}.jpg`);
@@ -182,6 +172,46 @@ export async function runRender(
 
 function hasChosenClip(hook: { brollPath?: string | null }): boolean {
   return typeof hook.brollPath === 'string' && hook.brollPath !== '' && existsSync(hook.brollPath);
+}
+
+/**
+ * Which clip each hook renders over. Three sources, most specific first: a clip
+ * pinned to that hook, then the project's chosen pool in order, then tag
+ * matching across the library.
+ *
+ * The dashboard calls this too, so what Review shows is what render will use —
+ * previously the two computed it separately and Review just asked again.
+ */
+export function assignClips(
+  paths: ProjectPaths,
+  spec: ReelSpec,
+  hooks: HookVariant[],
+  log?: PipelineLogger,
+): Map<string, string> {
+  const assignment = new Map<string, string>();
+  const pool = (spec.brollPool ?? []).filter((path) => existsSync(path));
+  const needAuto = hooks.filter((hook) => !hasChosenClip(hook));
+
+  let auto: { path: string }[] = [];
+  if (needAuto.length > 0) {
+    if (pool.length > 0) {
+      auto = needAuto.map((_, i) => ({ path: pool[i % pool.length] as string }));
+    } else {
+      const library = resolveLibrary(paths, log);
+      auto = library.length > 0 ? selectClips(library, spec.topic.split(/\s+/), needAuto.length) : [];
+    }
+  }
+
+  let autoIndex = 0;
+  for (const hook of hooks) {
+    if (hasChosenClip(hook)) {
+      assignment.set(hook.id, hook.brollPath as string);
+    } else {
+      const next = auto[autoIndex++];
+      if (next !== undefined) assignment.set(hook.id, next.path);
+    }
+  }
+  return assignment;
 }
 
 /** Project-local b-roll wins; then any configured library roots. */

@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFileSync, existsSync, readdirSync, statSync, createReadStream, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { join, resolve, basename, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { updateEnvFile, optionalEnv } from './config.ts';
@@ -30,6 +31,7 @@ import {
   libraryRoots,
   libraryRootsDetailed,
   resolveLibrary,
+  assignClips,
 } from './pipeline.ts';
 import {
   projectPaths,
@@ -356,15 +358,22 @@ async function handleApi(ctx: Ctx): Promise<unknown> {
 
     if (method === 'GET') {
       const caption = captionFor(spec, spec.seedHook ?? '');
+      const assignment = assignClips(paths, spec, spec.hooks);
       return {
         spec: { ...spec, caption: caption.text },
         captionCheck: checkCaption(caption.text),
-        variants: spec.hooks.map((hook) => ({
-          ...hook,
-          rendered: existsSync(join(paths.out, `${hook.id}.mp4`)),
-          videoUrl: `/media/${slug}/${hook.id}.mp4`,
-          coverUrl: `/media/${slug}/${hook.id}.jpg`,
-        })),
+        variants: spec.hooks.map((hook) => {
+          const assigned = assignment.get(hook.id) ?? null;
+          return {
+            ...hook,
+            rendered: existsSync(join(paths.out, `${hook.id}.mp4`)),
+            videoUrl: `/media/${slug}/${hook.id}.mp4`,
+            coverUrl: `/media/${slug}/${hook.id}.jpg`,
+            // What render will use, so Review reports rather than re-asks.
+            assignedClip: assigned,
+            assignedName: assigned === null ? null : basename(assigned),
+          };
+        }),
       };
     }
 
@@ -478,7 +487,9 @@ function serveMedia(url: URL, res: ServerResponse): boolean {
   void range;
 
   res.writeHead(200, { 'Content-Type': type, 'Content-Length': size, 'Cache-Control': 'no-store' });
-  createReadStream(target).pipe(res);
+  const stream = createReadStream(target);
+  stream.on('error', () => res.destroy());
+  stream.pipe(res);
   return true;
 }
 
@@ -525,35 +536,68 @@ async function servePreview(url: URL, res: ServerResponse): Promise<boolean> {
 }
 
 /**
+ * Extracted frames, keyed by clip path and mtime. Without this every keystroke
+ * spawned one ffmpeg per variant; typing a hook fanned out dozens of concurrent
+ * processes, which is what took the server down.
+ */
+const frameCache = new Map<string, Buffer>();
+const FRAME_CACHE_LIMIT = 32;
+
+/** One extraction at a time. Concurrent ffmpeg for previews buys nothing. */
+let extractionChain: Promise<unknown> = Promise.resolve();
+function serialize<T>(work: () => Promise<T>): Promise<T> {
+  const next = extractionChain.then(work, work);
+  extractionChain = next.catch(() => undefined);
+  return next;
+}
+
+/**
  * A frame of the real clip when we can get one, otherwise flat grey. The clip
  * path is checked against the indexed library rather than trusted, so this
  * cannot be turned into an arbitrary file read.
  */
 async function previewBackground(clip: string, width: number, height: number): Promise<Buffer> {
   const { default: sharp } = await import('sharp');
-  const flat = await sharp({
-    create: { width, height, channels: 3, background: { r: 74, g: 78, b: 86 } },
-  })
-    .png()
-    .toBuffer();
-
-  if (clip === '') return flat;
-  const known = libraryRoots().flatMap((root) => indexLibrary(root)).some((c) => c.path === clip);
-  if (!known) return flat;
-
-  const framePath = join(tmpdir(), `reelsmith-preview-${process.pid}.jpg`);
-  try {
-    await extractCover(clip, framePath, 0.5);
-    const frame = await sharp(framePath)
-      .resize(width, height, { fit: 'cover' })
+  const flat = async () =>
+    sharp({ create: { width, height, channels: 3, background: { r: 74, g: 78, b: 86 } } })
       .png()
       .toBuffer();
-    rmSync(framePath, { force: true });
-    return frame;
+
+  if (clip === '') return flat();
+  const known = libraryRoots().flatMap((root) => indexLibrary(root)).some((c) => c.path === clip);
+  if (!known) return flat();
+
+  let key = clip;
+  try {
+    key = `${clip}:${statSync(clip).mtimeMs}:${width}x${height}`;
   } catch {
-    rmSync(framePath, { force: true });
-    return flat;
+    return flat();
   }
+  const cached = frameCache.get(key);
+  if (cached !== undefined) return cached;
+
+  return serialize(async () => {
+    const again = frameCache.get(key);
+    if (again !== undefined) return again;
+
+    // A unique path per extraction: a shared one meant concurrent previews
+    // overwrote each other's frames and read half-written files.
+    const framePath = join(tmpdir(), `reelsmith-preview-${process.pid}-${randomUUID()}.jpg`);
+    try {
+      await extractCover(clip, framePath, 0.5);
+      const frame = await sharp(framePath).resize(width, height, { fit: 'cover' }).png().toBuffer();
+      if (frameCache.size >= FRAME_CACHE_LIMIT) {
+        const oldest = frameCache.keys().next().value;
+        if (oldest !== undefined) frameCache.delete(oldest);
+      }
+      frameCache.set(key, frame);
+      return frame;
+    } catch {
+      return flat();
+    } finally {
+      rmSync(framePath, { force: true });
+    }
+  });
 }
 
 async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -573,6 +617,11 @@ export function startServer(port: number): Promise<string> {
   const html = readFileSync(join(HERE, 'web', 'index.html'), 'utf8');
 
   const server = createServer((req, res) => {
+    // A browser that navigates away mid-request destroys the socket. Without
+    // these, the later write throws and takes the whole dashboard with it.
+    res.on('error', () => {});
+    req.on('error', () => {});
+
     const url = new URL(req.url ?? '/', 'http://localhost');
 
     if (url.pathname === '/' || url.pathname === '/index.html') {
@@ -605,6 +654,7 @@ export function startServer(port: number): Promise<string> {
   return new Promise((resolvePromise) => {
     // Loopback only. This server writes .env and can publish posts; it must
     // never be reachable from the network.
+    server.on('clientError', (_err, socket) => socket.destroy());
     server.listen(port, '127.0.0.1', () => {
       resolvePromise(`http://localhost:${port}`);
     });

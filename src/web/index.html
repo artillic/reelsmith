@@ -588,10 +588,12 @@ async function renderReview() {
       </div>
     </div>`;
 
-  const clipSelect = (index, chosen) => `
+  // Reports the clip render will use, rather than asking again. The default
+  // option names it, so choosing is an override and not a required step.
+  const clipSelect = (index, pinned, assignedName) => `
     <select data-clip="${index}">
-      <option value="">Pick automatically</option>
-      ${clips.map((c) => `<option value="${esc(c.path)}" ${c.path === chosen ? 'selected' : ''}>
+      <option value="">${assignedName ? 'Using ' + esc(assignedName) : 'No clip available'}</option>
+      ${clips.map((c) => `<option value="${esc(c.path)}" ${c.path === pinned ? 'selected' : ''}>
         ${esc(c.name)}${c.tags.length ? ' — ' + esc(c.tags.join('/')) : ''}</option>`).join('')}
     </select>`;
 
@@ -604,8 +606,8 @@ async function renderReview() {
         <span class="tag">${esc(v.variation || v.angle || 'variant')}</span>
         <label>Hook (burned onto the video)</label>
         <input data-hook="${i}" value="${esc(v.text)}" />
-        <label>B-roll clip</label>
-        ${clipSelect(i, v.brollPath || '')}
+        <label>B-roll clip ${v.brollPath ? '(overridden)' : '(from your selection)'}</label>
+        ${clipSelect(i, v.brollPath || '', v.assignedName)}
         <div class="actions">
           <button class="btn danger" data-del="${i}">Remove this variant</button>
         </div>
@@ -681,7 +683,7 @@ function refreshPreviews() {
         style: current.spec.style || 'outline',
         size: current.spec.size || 'medium',
         position: current.spec.position || 'top',
-        clip: hook.brollPath || '',
+        clip: hook.brollPath || (current.variants[i] && current.variants[i].assignedClip) || '',
         // Cache-buster: the URL is the only thing that changes as you type.
         t: String(Date.now()),
       });
