@@ -14,6 +14,7 @@ import {
   loadCredentials,
   buildPostPayload,
   trialFieldFromEnv,
+  audioFieldFromEnv,
   publicMediaUrl,
 } from './metricool.ts';
 import { ensureProjectDirs, writeSpec, writeScheduleManifest, type ProjectPaths } from './project.ts';
@@ -461,6 +462,17 @@ export async function runSchedule(
     log.warn('No trial-reel field configured — these schedule as ordinary reels.');
   }
 
+  const audioField = audioFieldFromEnv();
+  const audioValue = spec.audioId ?? '';
+  if (audioValue !== '' && audioField === undefined) {
+    log.warn(
+      'An audio track is set for this reel, but no audio field has been discovered yet — ' +
+        'it will not be sent. Run the probe under Setup.',
+    );
+  } else if (audioValue !== '' && audioField !== undefined) {
+    log.info(`All ${rendered.length} post(s) use audio ${audioValue}.`);
+  }
+
   log.step(`${opts.dryRun ? 'Planning' : 'Scheduling'} ${rendered.length} post(s) in ${opts.timezone}`);
 
   const client = opts.dryRun ? null : new MetricoolClient(loadCredentials());
@@ -502,6 +514,8 @@ export async function runSchedule(
         autoPublish: opts.autoPublish,
         trialField,
         trialValue,
+        audioField,
+        audioValue,
       }),
     );
     if (!created.ok) {

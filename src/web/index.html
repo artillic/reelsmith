@@ -428,9 +428,16 @@
         </div>
         <div id="probe-out"></div>
         <div class="row">
-          <div><label>Field name</label><input id="k-METRICOOL_TRIAL_FIELD" placeholder="e.g. instagramData.trialReel" /></div>
+          <div><label>Trial-reel field</label><input id="k-METRICOOL_TRIAL_FIELD" placeholder="e.g. instagramData.trialReel" /></div>
           <div><label>Value</label><input id="k-METRICOOL_TRIAL_VALUE" placeholder="true" /></div>
         </div>
+        <label>Audio field</label>
+        <input id="k-METRICOOL_AUDIO_FIELD" placeholder="e.g. instagramData.audioId" />
+        <p class="meta">
+          Metricool can attach trending audio to reels and trial reels from its Planner. Whether its
+          API accepts one isn't documented — the probe answers it from a post you scheduled by hand
+          with a track on. The track itself is chosen per reel, on the Review screen.
+        </p>
       </div>
 
       <div class="card">
@@ -905,6 +912,12 @@ async function renderReview() {
           </select>
         </div>
       </div>
+      <label>Instagram audio id (optional)</label>
+      <input id="hook-audio" placeholder="paste the audio id from Metricool" />
+      <p class="meta">
+        The same track goes on every variant — changing the audio alongside the hook would mean two
+        things moved at once and the result wouldn't tell you which one worked.
+      </p>
     </div>
 
     <div class="card">
@@ -1000,6 +1013,8 @@ async function renderReview() {
   };
 
   // Style is a spec-level choice, so changing it refreshes every preview.
+  $('hook-audio').value = spec.audioId || '';
+  $('hook-audio').oninput = () => { current.spec.audioId = $('hook-audio').value.trim() || null; };
   $('hook-style').value = spec.style || 'outline';
   $('hook-size').value = spec.size || 'medium';
   $('hook-position').value = spec.position || 'top';
@@ -1057,6 +1072,7 @@ function refreshPreviews() {
 async function saveSpec(msgEl) {
   const spec = { ...current.spec };
   if ($('caption-edit')) spec.caption = $('caption-edit').value;
+  if ($('hook-audio')) spec.audioId = $('hook-audio').value.trim() || null;
   try {
     if (msgEl) msgEl.textContent = 'Saving...';
     await api('/api/projects/' + current.slug, { method: 'PUT', body: { spec } });
@@ -1439,20 +1455,25 @@ $('btn-probe').onclick = async () => {
   const out = $('probe-out');
   out.innerHTML = '<p class="hint">Looking through your scheduled posts...</p>';
   try {
-    const { hits, postCount } = await api('/api/probe', { method: 'POST' });
-    out.innerHTML = hits.length
-      ? `<div class="banner ok">Found ${hits.length} candidate field(s). Click the right one.</div>` +
-        hits.map((h) => `<div class="clip"><span class="nm"><code>${esc(h.path)}</code> = ${esc(h.value)}</span>
-          <button class="btn ghost" data-field="${esc(h.path)}">Use this</button></div>`).join('')
-      : `<div class="banner">Nothing matching "trial" in ${postCount ?? 0} scheduled post(s).
-         Schedule one trial reel by hand in Metricool, then try again.</div>`;
+    const { groups, postCount } = await api('/api/probe', { method: 'POST' });
+    const target = { trial: 'k-METRICOOL_TRIAL_FIELD', audio: 'k-METRICOOL_AUDIO_FIELD' };
+    const found = groups.filter((g) => g.hits.length > 0 && target[g.id]);
+
+    out.innerHTML = found.length
+      ? found.map((g) => `<div class="banner ok">${esc(g.label)} — ${g.hits.length} candidate field(s)</div>` +
+          g.hits.map((h) => `<div class="clip">
+            <span class="nm"><code>${esc(h.path)}</code> = ${esc(h.value)}</span>
+            <button class="btn ghost" data-field="${esc(h.path)}" data-target="${esc(target[g.id])}">Use this</button>
+          </div>`).join('')).join('')
+      : `<div class="banner">Nothing matching trial reels or audio in ${postCount ?? 0} scheduled post(s).
+         Schedule one post by hand in Metricool — as a trial reel, with a track on — then try again.</div>`;
+
     out.onclick = (e) => {
       const btn = e.target.closest('[data-field]');
-      if (btn) {
-        $('k-METRICOOL_TRIAL_FIELD').value = btn.dataset.field;
-        $('k-METRICOOL_TRIAL_VALUE').value = 'true';
-        saveSettings($('settings-msg'));
-      }
+      if (!btn) return;
+      $(btn.dataset.target).value = btn.dataset.field;
+      if (btn.dataset.target === 'k-METRICOOL_TRIAL_FIELD') $('k-METRICOOL_TRIAL_VALUE').value = 'true';
+      saveSettings($('settings-msg'));
     };
   } catch (err) {
     out.innerHTML = `<div class="banner bad">${esc(err.message)}</div>`;

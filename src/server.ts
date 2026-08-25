@@ -19,7 +19,7 @@ import {
 } from './overlay.ts';
 import { indexLibrary } from './broll.ts';
 import { listBrands, loadAccountCredentials } from './metricool.ts';
-import { runProbe, findKeys } from './probe.ts';
+import { runProbe, findKeys, PROBE_PATTERNS } from './probe.ts';
 import { MetricoolClient, loadCredentials } from './metricool.ts';
 import { startJob, getJob, listJobs } from './jobs.ts';
 import {
@@ -71,6 +71,7 @@ const SETTING_KEYS = [
   'METRICOOL_BLOG_ID',
   'METRICOOL_TRIAL_FIELD',
   'METRICOOL_TRIAL_VALUE',
+  'METRICOOL_AUDIO_FIELD',
   'SUPABASE_URL',
   'SUPABASE_SERVICE_ROLE_KEY',
   'SUPABASE_BUCKET',
@@ -317,11 +318,19 @@ async function handleApi(ctx: Ctx): Promise<unknown> {
     };
     const posts = await client.listScheduledPosts(`${civil(-days)}T00:00:00`, `${civil(days)}T23:59:59`);
     if (!posts.ok) throw new UserError(`Could not read posts (${posts.status}). ${posts.text.slice(0, 200)}`);
-    const hits = findKeys(posts.data, /trial/i).map((hit) => ({
-      path: hit.path.replace(/^\$\./, '').replace(/\[\d+\]/g, ''),
-      value: JSON.stringify(hit.value)?.slice(0, 120) ?? '',
+    // Report every unknown field family at once: one hand-scheduled post can
+    // answer the trial-reel and the audio question in the same round trip.
+    const groups = PROBE_PATTERNS.map((family) => ({
+      id: family.id,
+      label: family.label,
+      hits: dedupeHits(
+        findKeys(posts.data, family.pattern).map((hit) => ({
+          path: hit.path.replace(/^\$\./, '').replace(/\[\d+\]/g, ''),
+          value: JSON.stringify(hit.value)?.slice(0, 120) ?? '',
+        })),
+      ),
     }));
-    return { hits, postCount: Array.isArray(posts.data) ? posts.data.length : null };
+    return { groups, postCount: Array.isArray(posts.data) ? posts.data.length : null };
   }
 
   if (path === '/api/ideate' && method === 'POST') {
@@ -486,6 +495,13 @@ async function handleApi(ctx: Ctx): Promise<unknown> {
   if (path === '/api/jobs' && method === 'GET') return { jobs: listJobs() };
 
   throw new UserError(`No route for ${method} ${path}`);
+}
+
+/** The same path appears once per post; the author needs the field, not the count. */
+function dedupeHits(hits: { path: string; value: string }[]): { path: string; value: string }[] {
+  const seen = new Map<string, { path: string; value: string }>();
+  for (const hit of hits) if (!seen.has(hit.path)) seen.set(hit.path, hit);
+  return [...seen.values()].slice(0, 12);
 }
 
 function defaultStart(): string {

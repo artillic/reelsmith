@@ -45,6 +45,13 @@ export interface ReelSpec {
   position?: HookPosition;
   size?: HookSize;
 
+  /**
+   * Instagram audio id, from Metricool's library. One per project, never per
+   * variant: the hook is the only thing under test, so the track is held
+   * constant exactly like the caption.
+   */
+  audioId?: string | null;
+
   /** @deprecated Superseded by `caption`; kept so older projects still load. */
   reasons?: string[];
   /** @deprecated Part of the old assembled-caption path. */

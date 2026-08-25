@@ -143,6 +143,12 @@ export interface PostPayloadInput {
   /** Discovered by `reel probe`; omitted entirely when unknown. */
   trialField?: string | undefined;
   trialValue?: unknown;
+  /**
+   * Instagram audio. Held constant across a batch: varying the track alongside
+   * the hook would confound the very comparison the test exists to make.
+   */
+  audioField?: string | undefined;
+  audioValue?: unknown;
 }
 
 /**
@@ -163,6 +169,12 @@ export function buildPostPayload(input: PostPayloadInput): Record<string, unknow
   if (input.trialField !== undefined && input.trialField !== '') {
     setDeep(payload, input.trialField, input.trialValue ?? true);
   }
+  if (
+    input.audioField !== undefined && input.audioField !== '' &&
+    input.audioValue !== undefined && input.audioValue !== ''
+  ) {
+    setDeep(payload, input.audioField, input.audioValue);
+  }
   return payload;
 }
 
@@ -179,6 +191,10 @@ function setDeep(target: Record<string, unknown>, path: string, value: unknown):
     cursor = cursor[key] as Record<string, unknown>;
   }
   cursor[parts[parts.length - 1] as string] = value;
+}
+
+export function audioFieldFromEnv(): string | undefined {
+  return optionalEnv('METRICOOL_AUDIO_FIELD');
 }
 
 export function trialFieldFromEnv(): { field: string | undefined; value: unknown } {

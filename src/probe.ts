@@ -15,6 +15,17 @@ export interface KeyHit {
   value: unknown;
 }
 
+/**
+ * Field families Metricool supports in its Planner but does not name in its
+ * public API docs. Each is discovered the same way: schedule one post by hand
+ * with the feature switched on, then read the post back and see what appears.
+ */
+export const PROBE_PATTERNS: { id: string; label: string; pattern: RegExp }[] = [
+  { id: 'trial', label: 'Trial reel', pattern: /trial/i },
+  { id: 'audio', label: 'Audio / music', pattern: /audio|sound|music|track/i },
+  { id: 'cover', label: 'Cover image', pattern: /cover|thumbnail/i },
+];
+
 /** Walks arbitrary JSON collecting paths whose key or string value matches `needle`. */
 export function findKeys(value: unknown, needle: RegExp, path = '$'): KeyHit[] {
   const hits: KeyHit[] = [];

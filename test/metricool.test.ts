@@ -86,3 +86,43 @@ test('maps the replacement track when an audio file is supplied', () => {
   assert.ok(args.includes('2:a'));
   assert.equal(args.includes('0:a?'), false);
 });
+
+test('audio is omitted entirely when the field has not been discovered', () => {
+  const payload = buildPostPayload({ ...basePayload, audioValue: 'audio-123' });
+  assert.equal(JSON.stringify(payload).includes('audio'), false);
+});
+
+test('audio is omitted when the field is known but no track is chosen', () => {
+  const payload = buildPostPayload({ ...basePayload, audioField: 'instagramData.audioId', audioValue: '' });
+  assert.equal(JSON.stringify(payload).includes('audio'), false);
+});
+
+test('a discovered audio field and a chosen track are sent together', () => {
+  const payload = buildPostPayload({
+    ...basePayload,
+    audioField: 'instagramData.audioId',
+    audioValue: 'audio-123',
+  });
+  assert.deepEqual(payload['instagramData'], { audioId: 'audio-123' });
+});
+
+test('trial and audio fields coexist under the same nested object', () => {
+  const payload = buildPostPayload({
+    ...basePayload,
+    trialField: 'instagramData.trialReel',
+    trialValue: true,
+    audioField: 'instagramData.audioId',
+    audioValue: 'audio-123',
+  });
+  assert.deepEqual(payload['instagramData'], { trialReel: true, audioId: 'audio-123' });
+});
+
+test('the probe looks for audio under several plausible names', async () => {
+  const { PROBE_PATTERNS } = await import('../src/probe.ts');
+  const audio = PROBE_PATTERNS.find((p) => p.id === 'audio');
+  assert.ok(audio, 'an audio family must be probed');
+  for (const key of ['audioId', 'soundName', 'musicTrack', 'trackId']) {
+    assert.ok(audio.pattern.test(key), `${key} should be recognised`);
+  }
+  assert.equal(audio.pattern.test('publicationDate'), false, 'unrelated keys must not match');
+});

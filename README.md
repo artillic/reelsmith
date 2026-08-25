@@ -201,6 +201,22 @@ batch does not ride identical footage. `--stock` fills from Pexels instead
 (needs `PEXELS_API_KEY`); Pexels footage requires attribution — check their
 license before publishing.
 
+## Audio
+
+Metricool can attach trending audio to reels and trial reels from its Planner,
+using Instagram's audio API. Whether its REST API accepts a track is not
+documented, so it is discovered the same way as the trial flag: the probe reads
+a hand-scheduled post that has a track on it and reports the field.
+
+The track is chosen **per reel, not per variant** — on the Review screen. Same
+reasoning as the caption: if the audio changed alongside the hook, two things
+would have moved at once and the result could not tell you which one worked.
+
+Two limits worth knowing. Metricool only exposes audio Instagram authorises for
+third-party use, so some trending sounds in the app are not available. And a
+reel using audio outside that library cannot auto-publish — it publishes by
+notification instead.
+
 ## Discovering the trial-reel field
 
 ```sh
