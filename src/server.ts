@@ -11,8 +11,10 @@ import {
   renderHookCardBuffer,
   HOOK_STYLES,
   HOOK_POSITIONS,
+  HOOK_SIZES,
   type HookStyle,
   type HookPosition,
+  type HookSize,
 } from './overlay.ts';
 import { indexLibrary } from './broll.ts';
 import { listBrands, loadAccountCredentials } from './metricool.ts';
@@ -488,8 +490,9 @@ async function servePreview(url: URL, res: ServerResponse): Promise<boolean> {
   const width = 405;
   const height = 720;
   const text = url.searchParams.get('text') ?? '';
-  const style = (url.searchParams.get('style') ?? 'panel') as HookStyle;
+  const style = (url.searchParams.get('style') ?? 'outline') as HookStyle;
   const position = (url.searchParams.get('position') ?? 'top') as HookPosition;
+  const size = (url.searchParams.get('size') ?? 'medium') as HookSize;
   const clip = url.searchParams.get('clip') ?? '';
 
   try {
@@ -498,8 +501,9 @@ async function servePreview(url: URL, res: ServerResponse): Promise<boolean> {
       text: text === '' ? 'Your hook goes here' : text,
       width,
       height,
-      style: HOOK_STYLES.includes(style) ? style : 'panel',
+      style: HOOK_STYLES.includes(style) ? style : 'outline',
       position: HOOK_POSITIONS.includes(position) ? position : 'top',
+      size: HOOK_SIZES.includes(size) ? size : 'medium',
     });
 
     const background = await previewBackground(clip, width, height);

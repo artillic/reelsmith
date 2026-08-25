@@ -51,3 +51,20 @@ test('the hook text is escaped in every style', () => {
     assert.equal(/<\$500/.test(svg), false, style);
   }
 });
+
+test('size steps down from large through medium to small', () => {
+  const size = (s: 'small' | 'medium' | 'large') =>
+    Number(/font-size="(\d+(?:\.\d+)?)"/.exec(buildHookSvg({ ...base, size: s }))?.[1]);
+  assert.ok(size('small') < size('medium'), 'small is below medium');
+  assert.ok(size('medium') < size('large'), 'medium is below large');
+});
+
+test('the default look is outline at medium — no box, white text, black edge', () => {
+  const svg = buildHookSvg(base);
+  assert.equal(/<rect/.test(svg), false, 'no panel by default');
+  assert.match(svg, /stroke="#000000"/);
+  assert.match(svg, /fill="#FFFFFF"/);
+  const defaultSize = Number(/font-size="(\d+(?:\.\d+)?)"/.exec(svg)?.[1]);
+  const large = Number(/font-size="(\d+(?:\.\d+)?)"/.exec(buildHookSvg({ ...base, size: 'large' }))?.[1]);
+  assert.ok(defaultSize < large, 'the default is smaller than the original setting');
+});

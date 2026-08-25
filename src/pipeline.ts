@@ -150,8 +150,9 @@ export async function runRender(
         text: hook.text,
         width: config.width,
         height: config.height,
-        style: spec.style ?? 'panel',
+        style: spec.style ?? 'outline',
         position: spec.position ?? 'top',
+        size: spec.size ?? 'medium',
       },
       overlayPath,
     );

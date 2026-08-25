@@ -514,13 +514,20 @@ async function renderReview() {
     <div class="card">
       <h3>Text style</h3>
       <p class="hint">How the hook is burned onto the video. Same on every variant, so it isn't part of the test.</p>
-      <div class="row">
+      <div class="row-3">
         <div><label>Style</label>
           <select id="hook-style">
+            <option value="outline">Outline — white text, black edge</option>
             <option value="panel">Panel — text on a dark box</option>
-            <option value="outline">Outline — text with a heavy edge</option>
-            <option value="banner">Banner — dark text on white bars</option>
-            <option value="lower-third">Lower third — smaller, near the bottom</option>
+            <option value="banner">Banner — dark text on a white box</option>
+            <option value="lower-third">Lower third — small, near the bottom</option>
+          </select>
+        </div>
+        <div><label>Size</label>
+          <select id="hook-size">
+            <option value="small">Small</option>
+            <option value="medium">Medium</option>
+            <option value="large">Large</option>
           </select>
         </div>
         <div><label>Position</label>
@@ -606,15 +613,16 @@ async function renderReview() {
   };
 
   // Style is a spec-level choice, so changing it refreshes every preview.
-  $('hook-style').value = spec.style || 'panel';
+  $('hook-style').value = spec.style || 'outline';
+  $('hook-size').value = spec.size || 'medium';
   $('hook-position').value = spec.position || 'top';
   const onLook = () => {
     current.spec.style = $('hook-style').value;
+    current.spec.size = $('hook-size').value;
     current.spec.position = $('hook-position').value;
     refreshPreviews();
   };
-  $('hook-style').onchange = onLook;
-  $('hook-position').onchange = onLook;
+  for (const id of ['hook-style', 'hook-size', 'hook-position']) $(id).onchange = onLook;
 
   $('btn-save-spec').onclick = () => saveSpec($('spec-msg'));
   $('btn-save-caption').onclick = () => saveSpec($('caption-count'));
@@ -647,7 +655,8 @@ function refreshPreviews() {
       if (!hook) continue;
       const q = new URLSearchParams({
         text: hook.text || '',
-        style: current.spec.style || 'panel',
+        style: current.spec.style || 'outline',
+        size: current.spec.size || 'medium',
         position: current.spec.position || 'top',
         clip: hook.brollPath || '',
         // Cache-buster: the URL is the only thing that changes as you type.

@@ -22,7 +22,21 @@ export type HookStyle = 'panel' | 'outline' | 'banner' | 'lower-third';
  */
 export type HookPosition = 'top' | 'middle' | 'lower';
 
-export const HOOK_STYLES: HookStyle[] = ['panel', 'outline', 'banner', 'lower-third'];
+/** Relative text size. A dial, because "a bit smaller" is a per-project taste call. */
+export type HookSize = 'small' | 'medium' | 'large';
+
+export const HOOK_STYLES: HookStyle[] = ['outline', 'panel', 'banner', 'lower-third'];
+export const HOOK_SIZES: HookSize[] = ['small', 'medium', 'large'];
+
+/**
+ * Multipliers on the base size. `large` is the original setting; `medium` is
+ * the default because the original read as slightly oversized on a real reel.
+ */
+const SIZE_SCALE: Record<HookSize, number> = {
+  small: 0.78,
+  medium: 0.88,
+  large: 1,
+};
 export const HOOK_POSITIONS: HookPosition[] = ['top', 'middle', 'lower'];
 
 const POSITION_ANCHORS: Record<HookPosition, number> = {
@@ -37,6 +51,7 @@ export interface HookCardOptions {
   height: number;
   style?: HookStyle;
   position?: HookPosition;
+  size?: HookSize;
   /** Overrides the position anchor when set. Fraction of frame height. */
   anchor?: number;
   /** Starting font size, shrunk automatically until the text fits. */
@@ -105,14 +120,15 @@ export function buildHookSvg(opts: HookCardOptions): string {
     text,
     width,
     height,
-    style = 'panel',
+    style = 'outline',
     position = 'top',
+    size = 'medium',
     maxLines = 4,
   } = opts;
 
   const fontFamily = optionalEnv('REEL_FONT_FAMILY') ?? DEFAULT_FONT_STACK;
   // A lower third is a caption, not a headline, so it starts smaller.
-  const baseSize = style === 'lower-third' ? width * 0.062 : width * 0.093;
+  const baseSize = (style === 'lower-third' ? width * 0.062 : width * 0.093) * SIZE_SCALE[size];
   const startSize = opts.fontSize ?? Math.round(baseSize);
 
   const margin = Math.round(width * 0.08);
