@@ -20,12 +20,20 @@ is reported, not repaired.
 dashboard over a frame of the actual clip — so wrapping and collisions are
 visible before any encoding happens.
 
-**Variants keep the hook's shape.** From `22 reasons to move to Thailand` you
-get `22 reasons why Thailand is the best place to start a business` and
-`22 reasons why you should move to Thailand while you're young` — same number,
-same skeleton, one thing changed. You do not get a contrarian rewrite or a
-question, because those test the format rather than the framing. Your original
-hook is always kept as variant one, so it is in the test too.
+**Variants change the qualifier and nothing else.** From
+`22 reasons you should move to Thailand` you get:
+
+```
+22 reasons why Thailand is the best place to start an online business
+22 reasons young people should move to Thailand
+22 reasons every entrepreneur should move to Thailand
+22 reasons you should move to Thailand while you're young
+```
+
+Same number, same noun, same subject — only who or what it's for moves. You do
+not get contrarian rewrites, questions, comparisons or specific-detail hooks:
+those change the format rather than the framing, so the results stop being
+comparable. Your own hook is always kept as variant one, so it is in the test.
 
 ## Status
 

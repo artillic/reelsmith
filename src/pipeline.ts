@@ -43,6 +43,7 @@ export interface IdeateStageOptions {
   caption: string;
   variantCount: number;
   notes?: string | undefined;
+  brollPool?: string[] | undefined;
 }
 
 export async function runIdeate(
@@ -68,6 +69,7 @@ export async function runIdeate(
     caption: opts.caption,
     seedHook: opts.seedHook,
     hooks,
+    brollPool: opts.brollPool ?? [],
   };
   writeSpec(paths, spec);
 
@@ -129,11 +131,16 @@ export async function runRender(
     log.warn('Pexels footage requires attribution.');
   }
 
-  // Hooks with a clip chosen in the dashboard keep it; the rest are filled in
-  // automatically, so picking is optional but always wins when used.
+  // Three sources, most specific first: a clip pinned to this hook, then the
+  // project's chosen pool, then tag matching across the whole library.
+  const pool = (spec.brollPool ?? []).filter((path) => existsSync(path));
   const needAuto = hooks.filter((hook) => !hasChosenClip(hook));
-  const library = resolveLibrary(paths, log);
-  const auto = needAuto.length > 0 ? selectClips(library, spec.topic.split(/\s+/), needAuto.length) : [];
+  const auto =
+    pool.length > 0
+      ? needAuto.map((_, i) => ({ path: pool[i % pool.length] as string, tags: [] }))
+      : needAuto.length > 0
+        ? selectClips(resolveLibrary(paths, log), spec.topic.split(/\s+/), needAuto.length)
+        : [];
   let autoIndex = 0;
 
   log.step(`Rendering ${hooks.length} variant(s) at ${config.width}x${config.height}`);

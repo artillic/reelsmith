@@ -33,6 +33,13 @@ export interface ReelSpec {
   seedHook: string;
   hooks: HookVariant[];
 
+  /**
+   * Clips chosen for this project, in order. Variants draw from these round
+   * robin, so footage is picked once up front rather than per variant. A hook's
+   * own `brollPath` still overrides its slot.
+   */
+  brollPool?: string[];
+
   /** How the burned-in hook looks. Applies to every variant, so it is not a test variable. */
   style?: HookStyle;
   position?: HookPosition;

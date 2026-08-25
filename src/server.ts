@@ -338,6 +338,9 @@ async function handleApi(ctx: Ctx): Promise<unknown> {
           caption,
           variantCount: Number(body['variantCount'] ?? 4),
           notes: typeof body['notes'] === 'string' ? body['notes'] : undefined,
+          brollPool: Array.isArray(body['brollPool'])
+            ? (body['brollPool'] as unknown[]).filter((v): v is string => typeof v === 'string')
+            : undefined,
         },
         log,
       );
