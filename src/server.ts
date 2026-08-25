@@ -42,6 +42,7 @@ import {
   type ProjectPaths,
 } from './project.ts';
 import { readState, stalenessReasons, variantStage } from './state.ts';
+import { verifyPubliclyReadable } from './storage.ts';
 import type { ReelSpec } from './types.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -385,6 +386,7 @@ async function handleApi(ctx: Ctx): Promise<unknown> {
             uploadUrl: vState.upload?.url ?? null,
             publishAt: vState.schedule?.publishAt ?? null,
             postId: vState.schedule?.postId ?? null,
+            autoPublish: vState.schedule?.autoPublish ?? false,
             lastError: vState.lastError ?? null,
           };
         }),
@@ -456,6 +458,26 @@ async function handleApi(ctx: Ctx): Promise<unknown> {
     const job = getJob(jobMatch[1] as string);
     if (job === undefined) throw new UserError('Unknown job.');
     return job;
+  }
+
+  /**
+   * Re-checks that every scheduled video is still publicly readable. Metricool
+   * fetches at publish time, so a bucket that went private after scheduling is
+   * a batch of failures nobody finds out about until afterwards.
+   */
+  if (path === '/api/recheck' && method === 'POST') {
+    const { paths } = projectFor(String(body['slug'] ?? ''));
+    const state = readState(paths);
+    const urls = Object.values(state.variants)
+      .map((variant) => variant.upload?.url)
+      .filter((url): url is string => typeof url === 'string');
+
+    const unreachable: string[] = [];
+    for (const url of urls) {
+      const check = await verifyPubliclyReadable(url);
+      if (!check.ok) unreachable.push(`${basename(url)} (${check.detail})`);
+    }
+    return { checked: urls.length, unreachable };
   }
 
   if (path === '/api/jobs' && method === 'GET') return { jobs: listJobs() };

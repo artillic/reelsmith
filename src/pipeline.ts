@@ -361,6 +361,23 @@ export async function runUpload(
  * the whole test is "which hook won", so a video showing a hook the author has
  * since rewritten is worse than no data at all.
  */
+/**
+ * A stable shuffle keyed on the project slug: the same project always produces
+ * the same order, so a dry-run preview matches what actually gets scheduled,
+ * but hook identity is decorrelated from posting slot across projects.
+ */
+export function shuffleBySlug<T>(items: T[], slug: string): T[] {
+  let seed = 0;
+  for (const char of slug) seed = (seed * 31 + char.charCodeAt(0)) >>> 0;
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    const j = seed % (i + 1);
+    [out[i], out[j]] = [out[j] as T, out[i] as T];
+  }
+  return out;
+}
+
 export function partitionVariants(
   paths: ProjectPaths,
   spec: ReelSpec,
@@ -426,8 +443,12 @@ export async function runSchedule(
     );
   }
 
+  // Deterministically shuffled by slug, so the seed hook does not always take
+  // the first slot. Otherwise time-of-day is confounded with hook identity in
+  // every single test the tool has ever run.
+  const ordered = shuffleBySlug(rendered, spec.slug);
   const times = planSchedule({
-    count: rendered.length,
+    count: ordered.length,
     start: opts.start,
     gapMinutes: opts.gapMinutes,
     dailyCap: opts.dailyCap,
@@ -445,7 +466,7 @@ export async function runSchedule(
   const client = opts.dryRun ? null : new MetricoolClient(loadCredentials());
   const variants: ScheduledVariant[] = [];
 
-  for (const [index, hook] of rendered.entries()) {
+  for (const [index, hook] of ordered.entries()) {
     const publishAt = times[index] as string;
     const caption = captionFor(spec, hook.text);
 

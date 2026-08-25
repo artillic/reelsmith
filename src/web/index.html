@@ -6,165 +6,352 @@
 <title>reelsmith</title>
 <style>
   :root {
-    --bg: #0d0f13;
-    --panel: #15181e;
-    --panel-2: #1b1f26;
-    --line: #272d37;
-    --text: #e7eaef;
-    --muted: #8c95a4;
-    --accent: #5b9dff;
-    --ok: #35d6a4;
-    --warn: #f0b429;
-    --bad: #ff6b6b;
-    --radius: 10px;
-    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    /* surfaces — a real luminance ramp, plus a level BELOW the page for wells */
+    --bg: #0B0C0F;
+    --sunken: #07080A;
+    --surface-1: #131519;
+    --surface-2: #1A1D23;
+    --surface-3: #23272F;
+    --scrim-grad: linear-gradient(to top,
+      rgba(8,9,11,.94) 0%, rgba(8,9,11,.86) 32%, rgba(8,9,11,.45) 68%, transparent 100%);
+
+    --line: #22262E;
+    --line-2: #333945;
+    --line-inset: rgba(255,255,255,.07);
+    --line-inset-hi: rgba(255,255,255,.12);
+
+    /* text — split so secondary CONTENT and decorative META are not the same grey */
+    --text: #F2F4F7;
+    --text-2: #B9C0CC;
+    --text-3: #949DAD;
+    --text-dis: #5C6472;
+
+    /* ember accent: warm against cool chrome, so it never competes with footage */
+    --accent: #FF7A3D;
+    --accent-hover: #FF8D57;
+    --accent-press: #E86426;
+    --accent-ink: #1B0E06;
+    --accent-tint: #2B1710;
+    --accent-line: #6E3418;
+    --focus: #FFA173;
+
+    --ok: #3DDC97;
+    --ok-tint: #10241C;
+    --ok-line: #1C5C43;
+
+    /* rose rather than red: a hue-0 red is only ~18 degrees from the accent */
+    --bad: #FF5470;
+    --bad-tint: #2A1119;
+    --bad-line: #6E2233;
+
+    --font-sans: "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont,
+      "Segoe UI Variable Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: "SF Mono", ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+
+    --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+    --space-5: 20px; --space-6: 24px; --space-7: 32px; --space-8: 40px;
+    --space-9: 48px; --space-10: 64px; --space-11: 96px;
+
+    --control-h: 40px;
+    --control-pad-x: 12px;
+    --header-h: 56px;
+    --nav-w: 240px;
+    --measure-form: 720px;
+    --measure-wide: 1320px;
+
+    --r-xs: 4px; --r-sm: 8px; --r-md: 10px; --r-lg: 14px; --r-xl: 20px; --r-full: 999px;
+
+    /* on near-black a drop shadow alone is invisible; the inset top highlight
+       is what makes a dark panel read as a surface rather than a hole */
+    --shadow-1: 0 1px 2px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.045);
+    --shadow-2: 0 4px 12px -2px rgba(0,0,0,.55), 0 2px 4px -1px rgba(0,0,0,.4),
+                inset 0 1px 0 rgba(255,255,255,.055);
+    --shadow-3: 0 16px 40px -10px rgba(0,0,0,.7), 0 6px 12px -4px rgba(0,0,0,.45),
+                inset 0 1px 0 rgba(255,255,255,.07);
+    --shadow-accent: 0 4px 16px -4px rgba(255,122,61,.45);
+    --ring: inset 0 0 0 1px var(--line-inset);
+
+    --dur-1: 100ms; --dur-2: 160ms; --dur-3: 240ms;
+    --ease-out: cubic-bezier(.2,.8,.2,1);
+    --ease-in: cubic-bezier(.4,0,1,1);
+
+    /* aliases so existing rules and JS-generated class names keep working */
+    --panel: var(--surface-1);
+    --panel-2: var(--surface-2);
+    --muted: var(--text-3);
+    --warn: var(--accent);
+    --radius: var(--r-lg);
+    --font: var(--font-sans);
+    --mono: var(--font-mono);
   }
+
   * { box-sizing: border-box; }
   body {
     margin: 0; background: var(--bg); color: var(--text);
-    font-family: var(--font); font-size: 14px; line-height: 1.5;
+    font-family: var(--font-sans); font-size: .9375rem; line-height: 1.6;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
   }
+
+  /* one focus system, outside the element on a bg-coloured spacer */
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    outline: 0; box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--focus); border-radius: var(--r-md);
+  }
+
   header {
-    display: flex; align-items: center; gap: 16px; padding: 14px 22px;
+    display: flex; align-items: center; gap: var(--space-4);
+    height: var(--header-h); padding: 0 var(--space-6);
     border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 10;
   }
-  header h1 { font-size: 15px; margin: 0; letter-spacing: -0.01em; }
-  header h1 span { color: var(--muted); font-weight: 400; }
-  .pills { display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+  header h1 { font-size: .9375rem; font-weight: 600; margin: 0; letter-spacing: -.004em; }
+  header h1 span { color: var(--text-3); font-weight: 400; }
+  .pills { display: flex; gap: var(--space-1); margin-left: auto; flex-wrap: wrap; }
   .pill {
-    font-size: 11px; padding: 3px 9px; border-radius: 99px;
-    border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
+    font-size: .6875rem; font-weight: 600; letter-spacing: .09em; text-transform: uppercase;
+    padding: 3px 9px; border-radius: var(--r-full); background: var(--surface-3); color: var(--text-3);
   }
-  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
-  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
+  .pill.ok { color: var(--ok); background: var(--ok-tint); }
+  .pill.bad { color: var(--bad); background: var(--bad-tint); }
 
-  .shell { display: grid; grid-template-columns: 190px 1fr; min-height: calc(100vh - 53px); }
-  nav { border-right: 1px solid var(--line); padding: 16px 10px; }
+  .shell { display: grid; grid-template-columns: var(--nav-w) 1fr; min-height: calc(100vh - var(--header-h)); }
+  nav { border-right: 1px solid var(--line); padding: var(--space-5) var(--space-3); }
   nav button {
-    display: block; width: 100%; text-align: left; background: none; border: 0;
-    color: var(--muted); font: inherit; padding: 8px 12px; border-radius: 8px; cursor: pointer;
+    position: relative; display: flex; align-items: center; width: 100%; text-align: left;
+    background: none; border: 0; color: var(--text-2); font: 500 .875rem/1.25rem var(--font-sans);
+    letter-spacing: -.004em; padding: var(--space-3) var(--space-4); border-radius: var(--r-md);
+    cursor: pointer; transition: background-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
   }
-  nav button:hover { color: var(--text); background: var(--panel); }
-  nav button.active { color: var(--text); background: var(--panel-2); }
-  nav .num { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 8px; font-size: 12px; }
+  nav button:hover { color: var(--text); background: var(--surface-1); }
+  nav button.active { color: var(--text); background: var(--surface-2); }
+  /* three simultaneous signals for the active item, not a 3% luminance shift */
+  nav button.active::before {
+    content: ''; position: absolute; left: 0; top: 20%; bottom: 20%; width: 3px;
+    background: var(--accent); border-radius: var(--r-full);
+    transform: scaleY(0); animation: growY var(--dur-2) var(--ease-out) forwards;
+  }
+  @keyframes growY { to { transform: scaleY(1); } }
+  nav .num {
+    display: inline-grid; place-items: center; width: 22px; height: 22px; margin-right: var(--space-3);
+    border-radius: var(--r-full); border: 1px solid var(--line-2);
+    font-size: .6875rem; font-weight: 600; color: var(--text-3); flex: none;
+  }
+  nav button.active .num { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 
-  main { padding: 26px 30px 80px; max-width: 900px; }
-  section { display: none; }
-  section.active { display: block; }
-  h2 { font-size: 19px; margin: 0 0 4px; letter-spacing: -0.015em; }
-  .sub { color: var(--muted); margin: 0 0 22px; }
+  main { padding: var(--space-8) var(--space-9) var(--space-11); }
+  section { display: none; max-width: var(--measure-form); }
+  section.active { display: block; animation: rise var(--dur-3) var(--ease-out); }
+  #s-review.active, #s-publish.active { max-width: var(--measure-wide); }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  h2 { font: 600 1.75rem/2rem var(--font-sans); letter-spacing: -.021em; margin: 0 0 var(--space-2); }
+  .sub { color: var(--text-2); margin: 0 0 var(--space-7); max-width: 62ch; }
 
   .card {
-    background: var(--panel); border: 1px solid var(--line);
-    border-radius: var(--radius); padding: 18px; margin-bottom: 16px;
+    background: var(--surface-1); border: 0; border-radius: var(--r-lg);
+    padding: var(--space-6); margin-bottom: var(--space-4); box-shadow: var(--shadow-1), var(--ring);
   }
-  .card h3 { font-size: 14px; margin: 0 0 3px; }
-  .card .hint { color: var(--muted); font-size: 12.5px; margin: 0 0 14px; }
+  .card--hero { background: var(--surface-2); padding: var(--space-7); border-radius: var(--r-xl); box-shadow: var(--shadow-2), var(--ring); }
+  .card h3 { font: 600 1.0625rem/1.375rem var(--font-sans); letter-spacing: -.011em; margin: 0 0 var(--space-1); }
+  .card .hint { color: var(--text-2); font-size: .9375rem; margin: 0 0 var(--space-5); max-width: 62ch; }
 
-  label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 5px; }
+  label { display: block; font: 500 .8125rem/1rem var(--font-sans); letter-spacing: .006em;
+          color: var(--text-2); margin: var(--space-6) 0 var(--space-2); }
   input, textarea, select {
-    width: 100%; background: var(--bg); color: var(--text);
-    border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px;
-    font: inherit; font-size: 13px;
+    width: 100%; height: var(--control-h); padding: 0 var(--control-pad-x);
+    background: var(--sunken); color: var(--text); border: 1px solid var(--line);
+    border-radius: var(--r-sm); font: inherit; font-size: .875rem;
+    transition: border-color var(--dur-1) var(--ease-out);
   }
-  input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-  textarea { resize: vertical; min-height: 90px; font-family: var(--mono); font-size: 12.5px; }
-  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  .row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  input:hover, textarea:hover, select:hover { border-color: var(--line-2); }
+  textarea { height: auto; resize: vertical; min-height: 96px; padding: var(--space-3) var(--control-pad-x);
+             font-family: var(--font-mono); font-size: .8125rem; line-height: 1.55; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+  .row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--space-3); }
 
   button.btn {
-    background: var(--accent); color: #06101f; border: 0; border-radius: 8px;
-    padding: 9px 16px; font: inherit; font-weight: 600; font-size: 13px; cursor: pointer;
+    height: var(--control-h); padding: 0 var(--space-4);
+    background: var(--accent); color: var(--accent-ink); border: 0; border-radius: var(--r-sm);
+    font: 600 .875rem/1 var(--font-sans); letter-spacing: -.004em; cursor: pointer;
+    transition: background-color var(--dur-1) var(--ease-out), box-shadow var(--dur-2) var(--ease-out),
+                transform var(--dur-1) var(--ease-out);
   }
-  button.btn:hover { filter: brightness(1.08); }
-  button.btn:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
-  button.ghost { background: none; color: var(--text); border: 1px solid var(--line); font-weight: 500; }
-  button.danger { background: none; color: var(--bad); border: 1px solid var(--line); font-weight: 500; }
-  .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 16px; }
+  button.btn:hover { background: var(--accent-hover); box-shadow: var(--shadow-accent); }
+  button.btn:active { transform: translateY(1px) scale(.99); background: var(--accent-press); transition-duration: 60ms; }
+  button.btn:disabled { background: var(--surface-3); color: var(--text-dis); cursor: not-allowed; box-shadow: none; transform: none; }
+  button.ghost { background: var(--surface-3); color: var(--text); font-weight: 500; }
+  button.ghost:hover { background: var(--line-2); box-shadow: none; }
+  button.danger { background: var(--bad-tint); color: var(--bad); font-weight: 500; }
+  button.danger:hover { background: var(--bad-line); color: var(--text); box-shadow: none; }
+  .actions { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; margin-top: var(--space-5); }
 
-  .check { display: flex; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); align-items: baseline; }
+  .check { display: flex; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--line); align-items: baseline; }
   .check:last-child { border-bottom: 0; }
-  .check .dot { width: 7px; height: 7px; border-radius: 99px; background: var(--bad); flex: none; transform: translateY(-1px); }
+  .check .dot { width: 7px; height: 7px; border-radius: var(--r-full); background: var(--bad); flex: none; transform: translateY(-1px); }
   .check .dot.ok { background: var(--ok); }
-  .check .name { width: 110px; flex: none; }
-  .check .detail { color: var(--muted); font-size: 12.5px; }
+  .check .name { width: 120px; flex: none; font-weight: 500; }
+  .check .detail { color: var(--text-3); font-size: .75rem; letter-spacing: .012em; }
 
+  /* the log is a well, not a bordered terminal pasted into the product */
   .log {
-    background: #0a0c0f; border: 1px solid var(--line); border-radius: 8px;
-    padding: 12px 14px; font-family: var(--mono); font-size: 12px;
-    max-height: 260px; overflow-y: auto; white-space: pre-wrap; margin-top: 14px;
+    background: var(--sunken); border: 0; border-radius: var(--r-md);
+    padding: var(--space-3) var(--space-4); font-family: var(--font-mono); font-size: .8125rem; line-height: 1.55;
+    max-height: 260px; overflow-y: auto; white-space: pre-wrap; margin-top: var(--space-4);
   }
   .log .l-step { color: var(--accent); }
   .log .l-ok { color: var(--ok); }
-  .log .l-warn { color: var(--warn); }
+  .log .l-warn { color: var(--accent); }
   .log .l-error { color: var(--bad); }
-  .log .l-info { color: var(--muted); }
+  .log .l-info { color: var(--text-3); }
 
-  .variant { display: grid; grid-template-columns: 150px 1fr; gap: 16px; }
-  .variant video, .variant .placeholder, .variant .preview {
-    width: 150px; aspect-ratio: 9/16; border-radius: 8px; background: var(--panel-2);
-    border: 1px solid var(--line); object-fit: cover;
-  }
-  .variant .placeholder { display: grid; place-items: center; color: var(--muted); font-size: 11.5px; text-align: center; padding: 10px; }
   .tag {
-    display: inline-block; font-size: 11px; color: var(--muted); border: 1px solid var(--line);
-    border-radius: 99px; padding: 2px 8px; margin-bottom: 8px;
+    display: inline-block; font-size: .6875rem; font-weight: 600; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--text-3); background: var(--surface-3); border-radius: var(--r-full);
+    padding: 3px 9px; margin-bottom: var(--space-2);
   }
-  .count { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .count { font-size: .75rem; color: var(--text-3); letter-spacing: .012em; }
   .count.over { color: var(--bad); }
+  .empty { color: var(--text-3); text-align: center; padding: var(--space-8) var(--space-3); }
 
-  .empty { color: var(--muted); text-align: center; padding: 34px 10px; }
   .step-n {
-    display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 99px;
-    background: var(--accent); color: #06101f; font-size: 11px; font-weight: 700; margin-right: 7px;
+    display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-full);
+    background: var(--accent); color: var(--accent-ink); font-size: .6875rem; font-weight: 700; margin-right: var(--space-2);
   }
-  .pick { display: flex; gap: 9px; align-items: center; padding: 5px 0; font-size: 12.5px; }
-  .pick input { width: auto; }
+  .pick { display: flex; gap: var(--space-3); align-items: center; padding: var(--space-2) 0; font-size: .875rem; }
+  .pick input { width: auto; height: auto; }
   .pick .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #clip-picker { max-height: 300px; overflow-y: auto; margin-top: 12px; }
-  .clip { display: flex; gap: 10px; padding: 6px 0; font-size: 12.5px; border-bottom: 1px solid var(--line); }
+  #clip-picker { max-height: 320px; overflow-y: auto; margin-top: var(--space-3); }
+  .clip { display: flex; gap: var(--space-3); padding: var(--space-2) 0; font-size: .875rem; border-bottom: 1px solid var(--line); align-items: center; }
   .clip:last-child { border-bottom: 0; }
   .clip .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .clip .mb { color: var(--muted); font-variant-numeric: tabular-nums; }
-  .banner {
-    border: 1px solid var(--line); border-left: 3px solid var(--warn);
-    background: var(--panel-2); border-radius: 8px; padding: 11px 14px; margin-bottom: 16px; font-size: 13px;
-  }
-  .banner.bad { border-left-color: var(--bad); }
-  .banner.ok { border-left-color: var(--ok); }
-  code { font-family: var(--mono); font-size: 12px; background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+  .clip .mb { color: var(--text-3); font-size: .75rem; }
 
-  /* Activity bar: work is server-side, so it survives navigation and reloads. */
+  .banner {
+    border: 0; border-left: 3px solid var(--accent); background: var(--accent-tint);
+    border-radius: var(--r-md); padding: var(--space-3) var(--space-4);
+    margin-bottom: var(--space-4); font-size: .9375rem; color: var(--text);
+  }
+  .banner.bad { border-left-color: var(--bad); background: var(--bad-tint); }
+  .banner.ok { border-left-color: var(--ok); background: var(--ok-tint); }
+  code { font-family: var(--font-mono); font-size: .8125rem; background: var(--surface-3); padding: 1px 5px; border-radius: var(--r-xs); }
+
   #activity {
-    position: sticky; top: 53px; z-index: 9; background: var(--panel-2);
-    border-bottom: 1px solid var(--line); padding: 10px 22px; display: none;
+    position: sticky; top: var(--header-h); z-index: 9; background: var(--surface-2);
+    border-bottom: 1px solid var(--line); padding: var(--space-3) var(--space-6); display: none;
   }
   #activity.on { display: block; }
-  .act-row { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+  .act-row { display: flex; align-items: center; gap: var(--space-3); font-size: .875rem; }
   .act-row .spin {
-    width: 12px; height: 12px; border-radius: 99px; flex: none;
-    border: 2px solid var(--line); border-top-color: var(--accent);
-    animation: spin 0.8s linear infinite;
+    width: 14px; height: 14px; border-radius: var(--r-full); flex: none;
+    border: 2px solid var(--line-2); border-top-color: var(--accent); animation: spin 1s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .act-row .dot2 { width: 8px; height: 8px; border-radius: 99px; flex: none; }
+  .act-row .dot2 { width: 8px; height: 8px; border-radius: var(--r-full); flex: none; }
   .act-row .dot2.ok { background: var(--ok); }
   .act-row .dot2.bad { background: var(--bad); }
   .act-row .grow { flex: 1; }
-  .act-row .tiny { color: var(--muted); font-size: 12px; }
-  #activity .log { max-height: 190px; margin-top: 10px; }
+  .act-row .tiny { color: var(--text-3); font-size: .75rem; }
+  #activity .log { max-height: 190px; margin-top: var(--space-3); }
 
+  /* status chips: colour plus a leading dot, so stage is never hue-only */
   .chip {
-    display: inline-flex; align-items: center; gap: 5px; font-size: 11px;
-    border-radius: 99px; padding: 2px 9px; border: 1px solid var(--line); color: var(--muted);
+    display: inline-flex; align-items: center; gap: 6px; font-size: .75rem; font-weight: 500;
+    border-radius: var(--r-full); padding: 3px 10px; background: var(--surface-3); color: var(--text-3);
+    transition: background-color var(--dur-3), color var(--dur-3);
   }
-  .chip.made { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
-  .chip.uploaded { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
-  .chip.scheduled { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
-  .chip.stale { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
-  .chip.failed { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
-  .meta { color: var(--muted); font-size: 11.5px; margin-top: 6px; }
+  .chip::before { content: ''; width: 6px; height: 6px; border-radius: var(--r-full); background: currentColor; flex: none; }
+  .chip.made { color: var(--ok); background: transparent; box-shadow: inset 0 0 0 1px var(--ok-line); }
+  .chip.uploaded { color: var(--ok); background: var(--ok-tint); }
+  .chip.scheduled { color: var(--ok); background: var(--ok-tint); }
+  .chip.stale { color: var(--accent); background: var(--accent-tint); box-shadow: inset 0 0 0 1px var(--accent-line); }
+  .chip.failed { color: var(--bad); background: var(--bad-tint); box-shadow: inset 0 0 0 1px var(--bad-line); }
+  .meta { color: var(--text-3); font-size: .75rem; letter-spacing: .012em; margin-top: var(--space-2); }
+
+  /* ---- the variant wall: the card IS the video, the form appears on touch ---- */
+  #variants { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: var(--space-6); }
+  .variant {
+    position: relative; aspect-ratio: 9/16; border-radius: var(--r-xl); overflow: hidden;
+    background: #000; padding: 0; margin: 0;
+    box-shadow: var(--shadow-2), var(--ring);
+    transition: transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out);
+  }
+  .variant:hover { transform: translateY(-3px); box-shadow: var(--shadow-3), inset 0 0 0 1px var(--line-inset-hi); }
+  .variant video, .variant .preview, .variant .placeholder {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; border: 0; border-radius: 0; background: #000;
+  }
+  .variant .placeholder { display: grid; place-items: center; color: var(--text-3); font-size: .75rem; text-align: center; padding: var(--space-4); }
+  .variant .idx {
+    position: absolute; top: var(--space-3); left: var(--space-3); z-index: 2;
+    font: 600 .75rem/1 var(--font-mono); color: var(--text);
+    background: rgba(8,9,11,.75); backdrop-filter: blur(8px);
+    padding: 6px 9px; border-radius: var(--r-full);
+  }
+  .variant .stage { position: absolute; top: var(--space-3); right: var(--space-3); z-index: 2; backdrop-filter: blur(8px); }
+  .variant .foot {
+    position: absolute; inset: auto 0 0 0; z-index: 2;
+    padding: var(--space-10) var(--space-4) var(--space-4); background: var(--scrim-grad);
+  }
+  .variant .foot .tag { margin-bottom: var(--space-2); background: rgba(255,255,255,.1); color: var(--text-2); }
+  /* the hook reads as a headline and behaves as a field */
+  /* a textarea, not an input: the hook wraps, and it is the card's content */
+  .variant .foot textarea[data-hook] {
+    width: calc(100% + var(--space-4)); min-height: 0; height: auto;
+    margin: 0 0 0 calc(var(--space-2) * -1); padding: var(--space-1) var(--space-2);
+    background: transparent; border: 0; border-radius: var(--r-sm); resize: none; overflow: hidden;
+    font: 550 1rem/1.375rem var(--font-sans); letter-spacing: -.006em; color: var(--text); cursor: text;
+    transition: background-color var(--dur-1) var(--ease-out);
+  }
+  .variant .foot textarea[data-hook]:hover { background: rgba(255,255,255,.08); }
+  .variant .foot textarea[data-hook]:focus { background: var(--sunken); }
+  .variant .foot select[data-clip] {
+    width: 100%; height: var(--control-h); margin-top: var(--space-2);
+    background: rgba(255,255,255,.08); border: 0; color: var(--text-2); font-size: .75rem;
+  }
+  .variant .cut {
+    position: absolute; top: var(--space-3); right: var(--space-3); z-index: 3;
+    width: 28px; height: 28px; padding: 0; border-radius: var(--r-full);
+    background: rgba(8,9,11,.8); color: var(--bad); border: 0; cursor: pointer; font-size: .875rem;
+    opacity: 0; transition: opacity var(--dur-2) var(--ease-out);
+  }
+  .variant:hover .cut, .variant:focus-within .cut { opacity: 1; }
+  .variant:hover .stage, .variant:focus-within .stage { opacity: 0; }
+
+  /* ---- publish: pace, timeline, receipt ---- */
+  .seg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; background: var(--sunken); padding: 4px; border-radius: var(--r-md); }
+  .seg button {
+    height: 36px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text-2);
+    font: 500 .8125rem/1 var(--font-sans); cursor: pointer; transition: background-color var(--dur-1), color var(--dur-1);
+  }
+  .seg button:hover { color: var(--text); background: var(--surface-2); }
+  .seg button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .day { margin-top: var(--space-5); }
+  .day h4 {
+    font: 600 .6875rem/1 var(--font-sans); letter-spacing: .09em; text-transform: uppercase;
+    color: var(--text-3); margin: 0 0 var(--space-2);
+  }
+  .slot { display: flex; gap: var(--space-4); align-items: center; padding: var(--space-3) 0; border-bottom: 1px solid var(--line); }
+  .slot:last-child { border-bottom: 0; }
+  .slot .t { font: 500 .875rem/1 var(--font-mono); color: var(--text); width: 56px; flex: none; }
+  .slot .hk { flex: 1; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .slot img { width: 32px; height: 57px; object-fit: cover; border-radius: var(--r-xs); background: #000; flex: none; }
+  .radio-card {
+    display: flex; gap: var(--space-3); padding: var(--space-4); border-radius: var(--r-md);
+    background: var(--sunken); box-shadow: inset 0 0 0 1px var(--line); cursor: pointer; margin-bottom: var(--space-2);
+    transition: box-shadow var(--dur-1) var(--ease-out);
+  }
+  .radio-card:hover { box-shadow: inset 0 0 0 1px var(--line-2); }
+  .radio-card.on { box-shadow: inset 0 0 0 2px var(--accent); background: var(--accent-tint); }
+  .radio-card input { width: auto; height: auto; margin-top: 3px; flex: none; }
+  .radio-card b { display: block; font-size: .9375rem; font-weight: 600; }
+  .radio-card span { color: var(--text-2); font-size: .8125rem; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 1ms !important; animation-iteration-count: 1 !important;
+      transition-duration: 1ms !important; scroll-behavior: auto !important;
+    }
+    .act-row .spin { animation-duration: 1s !important; animation-iteration-count: infinite !important; }
+  }
 </style>
 </head>
 <body>
@@ -520,6 +707,8 @@ async function pollActivity() {
 /* ---------------------------------------------------------------- jobs -- */
 
 function renderLog(target, job) {
+  // The timeline polls jobs with no visible log surface; tolerate that.
+  if (!target || typeof target.querySelector !== 'function') return;
   // A failure gets its own banner above the log. Burying it as one red line in a
   // scrolling box is how a real error reads as "nothing happened".
   const banner = job.status === 'error'
@@ -625,6 +814,8 @@ async function renderReview() {
   const clips = await clipOptions();
 
   const problems = (captionCheck && captionCheck.problems) || [];
+  // A missing cover must not leave a broken-image icon on a premium surface.
+  const imgFallback = ` onerror="this.style.visibility='hidden'"`;
 
   $('review-body').innerHTML = `
     ${problems.length ? `<div class="banner bad">${problems.map(esc).join('<br>')}</div>` : ''}
@@ -660,8 +851,8 @@ async function renderReview() {
     <div class="card">
       <h3>${esc(spec.seedHook || spec.topic)}</h3>
       <p class="hint">
-        ${variants.length} variant(s). Same caption and same length on each — the hook and the
-        footage are the only things that change. The stills below are live previews, not renders.
+        ${plural(variants.length, 'variant')}. Same caption on each — the hook and the footage are the
+        only things that change. Cards without a video yet show a live preview of the text.
       </p>
       <div id="variants"></div>
       <div class="actions">
@@ -681,15 +872,6 @@ async function renderReview() {
         <span class="count" id="caption-count"></span>
       </div>
     </div>`;
-
-  // Reports the clip render will use, rather than asking again. The default
-  // option names it, so choosing is an override and not a required step.
-  const clipSelect = (index, pinned, assignedName) => `
-    <select data-clip="${index}">
-      <option value="">${assignedName ? 'Using ' + esc(assignedName) : 'No clip available'}</option>
-      ${clips.map((c) => `<option value="${esc(c.path)}" ${c.path === pinned ? 'selected' : ''}>
-        ${esc(c.name)}${c.tags.length ? ' — ' + esc(c.tags.join('/')) : ''}</option>`).join('')}
-    </select>`;
 
   const STAGE_LABEL = {
     'not-made': 'Not made yet',
@@ -715,20 +897,23 @@ async function renderReview() {
   };
 
   $('variants').innerHTML = variants.map((v, i) => `
-    <div class="card variant">
+    <div class="variant">
       ${v.rendered
-        ? `<video src="${esc(v.videoUrl)}" controls preload="metadata" poster="${esc(v.coverUrl)}"></video>`
+        ? `<video src="${esc(v.videoUrl)}" preload="metadata" poster="${esc(v.coverUrl)}" muted playsinline></video>`
         : `<img class="preview" data-preview="${i}" alt="preview of the hook" />`}
-      <div>
-        <span class="tag">${esc(v.variation || v.angle || 'variant')}</span>
-        ${statusFor(v)}
-        <label>Hook (burned onto the video)</label>
-        <input data-hook="${i}" value="${esc(v.text)}" />
-        <label>B-roll clip ${v.brollPath ? '(overridden)' : '(from your selection)'}</label>
-        ${clipSelect(i, v.brollPath || '', v.assignedName)}
-        <div class="actions">
-          <button class="btn danger" data-del="${i}">Remove this variant</button>
-        </div>
+      <span class="idx">${String(i + 1).padStart(2, '0')}</span>
+      <span class="chip stage ${esc(v.stage)}">${esc(STAGE_LABEL[v.stage] || v.stage)}</span>
+      <button class="cut" data-del="${i}" title="Remove this variant">✕</button>
+      <div class="foot">
+        <span class="tag">${esc(v.variation || 'variant')}</span>
+        <textarea data-hook="${i}" rows="3" aria-label="Hook text" spellcheck="false">${esc(v.text)}</textarea>
+        <select data-clip="${i}" aria-label="B-roll clip">
+          <option value="">${v.assignedName ? 'Using ' + esc(v.assignedName) : 'No clip available'}</option>
+          ${clips.map((c) => `<option value="${esc(c.path)}" ${c.path === (v.brollPath || '') ? 'selected' : ''}>
+            ${esc(c.name)}${c.tags.length ? ' — ' + esc(c.tags.join('/')) : ''}</option>`).join('')}
+        </select>
+        ${v.stage === 'stale' || v.lastError ? `<div class="meta">${esc(
+          v.lastError ? v.lastError.message.slice(0, 90) : 'Needs re-making — ' + v.staleReasons.join(' and '))}</div>` : ''}
       </div>
     </div>`).join('');
 
@@ -825,6 +1010,10 @@ async function saveSpec(msgEl) {
 
 /* ------------------------------------------------------------- publish -- */
 
+function plural(n, word, wordPlural) {
+  return `${n} ${n === 1 ? word : wordPlural || word + 's'}`;
+}
+
 function when(iso) {
   if (!iso) return '';
   const d = new Date(iso);
@@ -835,80 +1024,301 @@ function when(iso) {
   return d.toLocaleDateString();
 }
 
+const PACE = [
+  { id: 'burst', label: 'All in one day', cap: 24 },
+  { id: 'three', label: 'Three a day', cap: 3 },
+  { id: 'two', label: 'Twice a day', cap: 2 },
+  { id: 'one', label: 'One a day', cap: 1 },
+];
+
+let pub = { pace: 'two', winStart: 9, winEnd: 21, auto: false, plan: null, planning: false };
+
+/**
+ * The gap is derived, not asked for. Window divided by pace spreads posts
+ * evenly across the day instead of clustering at its start, and makes the
+ * "gap doesn't fit in the window" error unreachable.
+ */
+function paceOptions() {
+  const cap = (PACE.find((p) => p.id === pub.pace) || PACE[2]).cap;
+  const gap = Math.max(30, Math.floor(((pub.winEnd - pub.winStart) * 60) / cap));
+  return {
+    slug: current.slug,
+    timezone: $('p-tz') ? $('p-tz').value : 'UTC',
+    start: $('p-start') ? $('p-start').value : '',
+    gapMinutes: gap,
+    dailyCap: Math.min(cap, 50),
+    windowStartHour: pub.winStart,
+    windowEndHour: pub.winEnd,
+    autoPublish: pub.auto,
+  };
+}
+
+async function replan() {
+  if (pub.planning) return;
+  pub.planning = true;
+  try {
+    const { jobId } = await api('/api/schedule', { method: 'POST', body: { ...paceOptions(), dryRun: true } });
+    const job = await runJob(jobId, { innerHTML: '' });
+    pub.plan = job.status === 'done' && job.result ? job.result : null;
+    pub.planError = job.status === 'error' ? job.error : null;
+  } catch (err) {
+    pub.plan = null; pub.planError = err.message;
+  } finally {
+    pub.planning = false;
+    drawTimeline();
+  }
+}
+
+function drawTimeline() {
+  const box = $('p-timeline');
+  if (!box) return;
+  if (pub.planError) { box.innerHTML = `<div class="banner bad">${esc(pub.planError)}</div>`; return; }
+  if (!pub.plan) { box.innerHTML = '<div class="empty">Working out the times…</div>'; return; }
+
+  const byHook = {};
+  for (const v of current.variants) byHook[v.id] = v;
+  const days = {};
+  for (const v of pub.plan.variants) {
+    const day = v.publishAt.slice(0, 10);
+    (days[day] = days[day] || []).push(v);
+  }
+  const fmtDay = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString(undefined,
+    { weekday: 'short', day: 'numeric', month: 'short' });
+
+  box.innerHTML = Object.keys(days).sort().map((day) => `
+    <div class="day">
+      <h4>${esc(fmtDay(day))}</h4>
+      ${days[day].map((v) => {
+        const hook = byHook[v.hookId];
+        return `<div class="slot">
+          <span class="t">${esc(v.publishAt.slice(11, 16))}</span>
+          ${hook && hook.rendered ? `<img src="${esc(hook.coverUrl)}" alt="" />` : ''}
+          <span class="hk">${esc(hook ? hook.text : v.hookId)}</span>
+        </div>`;
+      }).join('')}
+    </div>`).join('');
+}
+
+function planSpan() {
+  if (!pub.plan || !pub.plan.variants.length) return null;
+  const times = pub.plan.variants.map((v) => v.publishAt).sort();
+  const first = times[0], last = times[times.length - 1];
+  const days = new Set(times.map((t) => t.slice(0, 10))).size;
+  const nice = (t) => new Date(t).toLocaleString(undefined,
+    { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  return { first, last, days, firstNice: nice(first), lastNice: nice(last), count: times.length };
+}
+
 function renderPublish() {
   if (!current) return;
   const tz = (state.settings.REEL_TIMEZONE && state.settings.REEL_TIMEZONE.value) || 'UTC';
-  const usable = current.variants.filter((v) => v.stage === 'made' || v.stage === 'uploaded' || v.stage === 'scheduled');
+  const ready = current.variants.filter((v) => v.stage === 'made' || v.stage === 'uploaded');
+  const done = current.variants.filter((v) => v.stage === 'scheduled');
   const stale = current.variants.filter((v) => v.stage === 'stale');
-  const rendered = usable.length;
   const trial = state.checks.trialReel && state.checks.trialReel.ok;
 
+  // Already scheduled: this is a receipt, not a form. Nothing to schedule twice.
+  if (done.length > 0 && ready.length === 0) return renderReceipt(done);
+
+  const blocked = [];
+  if (ready.length === 0) blocked.push('No videos are ready. Make them in Review first.');
+  if (!state.checks.storage.ok) blocked.push('No public bucket configured — Metricool needs a public URL to fetch from. Set it up under Setup.');
+  if (!state.checks.metricool.ok) blocked.push('Metricool isn\'t connected. ' + state.checks.metricool.detail + '.');
+
   const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const hours = (sel) => Array.from({ length: 24 }, (_, h) =>
+    `<option value="${h}" ${h === sel ? 'selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('');
 
   $('publish-body').innerHTML = `
-    ${rendered === 0 ? '<div class="banner bad">No videos ready. Go back to Review and press "Make the videos".</div>' : ''}
-    ${stale.length ? `<div class="banner">${stale.length} video(s) no longer match their hook or clip and will be skipped. Re-make them in Review first.</div>` : ''}
-    ${trial ? '' : '<div class="banner">Trial-reel field not set, so these will post as ordinary reels, visible to your followers. Set it up under Setup if you want trial reels.</div>'}
+    ${blocked.map((b) => `<div class="banner bad">${esc(b)}</div>`).join('')}
+    ${stale.length ? `<div class="banner">${plural(stale.length, 'video')} no longer ${stale.length === 1 ? 'matches its' : 'match their'} hook and ${stale.length === 1 ? 'is' : 'are'} left out of this batch. Re-make ${stale.length === 1 ? 'it' : 'them'} in Review to include ${stale.length === 1 ? 'it' : 'them'}.</div>` : ''}
+    ${done.length ? `<div class="banner ok">${done.length} of these are already on the calendar and won't be scheduled again.</div>` : ''}
+
+    <div class="card card--hero">
+      <h3>${esc(current.spec.seedHook || current.spec.topic)}</h3>
+      <p class="hint">${plural(ready.length, 'video')} ready to go out, all with the same caption.</p>
+
+      <label>How fast should the test run?</label>
+      <div class="seg" id="p-pace">
+        ${PACE.map((p) => `<button data-pace="${p.id}" class="${p.id === pub.pace ? 'on' : ''}">${esc(p.label)}</button>`).join('')}
+      </div>
+
+      <div class="row-3">
+        <div><label>First post</label><input id="p-start" type="datetime-local" value="${tomorrow}T09:00" /></div>
+        <div><label>Only post after</label><select id="p-ws">${hours(pub.winStart)}</select></div>
+        <div><label>And before</label><select id="p-we">${hours(pub.winEnd)}</select></div>
+      </div>
+      <label>Timezone</label>
+      <select id="p-tz">${tzOptions(tz)}</select>
+
+      <div id="p-timeline"></div>
+    </div>
 
     <div class="card">
-      <h3>${esc(current.spec.seedHook || current.spec.topic)}</h3>
-      <p class="hint">${rendered} video(s) ready, up to date with their hooks.</p>
-      <div>${usable.map((v) => `<div class="clip">
-        <span class="nm">${esc(v.text)}</span>
-        <span class="chip ${esc(v.stage)}">${esc(v.stage)}</span>
-        <span class="mb">${v.renderedAt ? esc(when(v.renderedAt)) : ''}</span></div>`).join('')}</div>
-      <div class="row">
-        <div><label>First post</label><input id="p-start" type="datetime-local" value="${tomorrow}T09:00" /></div>
-        <div><label>Timezone</label><input id="p-tz" value="${esc(tz)}" /></div>
+      <h3>How they land</h3>
+      <label class="radio-card ${pub.auto ? '' : 'on'}" data-auto="0">
+        <input type="radio" name="p-auto" ${pub.auto ? '' : 'checked'} />
+        <span><b>Send to Metricool as drafts</b>
+        <span>You approve each one in the Planner. Pick this if you still flip them to trial reels by hand.</span></span>
+      </label>
+      <label class="radio-card ${pub.auto ? 'on' : ''}" data-auto="1">
+        <input type="radio" name="p-auto" ${pub.auto ? 'checked' : ''} />
+        <span><b>Publish automatically</b>
+        <span>They go out at the times above with no further approval.</span></span>
+      </label>
+      <p class="meta">${trial
+        ? 'Posting as trial reels — only non-followers will see them.'
+        : 'Posting as ordinary reels. Your followers will see these, so the test is no longer cold-audience only.'}</p>
+      <div class="actions">
+        <button class="btn" id="btn-review" ${blocked.length || ready.length === 0 ? 'disabled' : ''}>Review ${ready.length} post${ready.length === 1 ? '' : 's'} →</button>
       </div>
-      <div class="row-3">
-        <div><label>Hours between posts</label><input id="p-gap" type="number" value="5" min="1" max="48" /></div>
-        <div><label>Max per day</label><input id="p-cap" type="number" value="4" min="1" max="50" /></div>
-        <div><label>Posting hours</label><input id="p-window" value="9-21" /></div>
+    </div>
+    <div id="publish-log"></div>`;
+
+  $('p-pace').onclick = (e) => {
+    const b = e.target.closest('[data-pace]');
+    if (!b) return;
+    pub.pace = b.dataset.pace;
+    for (const el of $('p-pace').children) el.classList.toggle('on', el.dataset.pace === pub.pace);
+    replan();
+  };
+  $('p-ws').onchange = () => { pub.winStart = Number($('p-ws').value); replan(); };
+  $('p-we').onchange = () => { pub.winEnd = Number($('p-we').value); replan(); };
+  $('p-start').onchange = replan;
+  $('p-tz').onchange = replan;
+  for (const card of document.querySelectorAll('[data-auto]')) {
+    card.onclick = () => {
+      pub.auto = card.dataset.auto === '1';
+      for (const c of document.querySelectorAll('[data-auto]')) c.classList.toggle('on', c.dataset.auto === (pub.auto ? '1' : '0'));
+    };
+  }
+  $('btn-review').onclick = () => showConfirm(ready, trial);
+  replan();
+}
+
+function tzOptions(selected) {
+  let zones = [];
+  try { zones = Intl.supportedValuesOf('timeZone'); } catch { zones = []; }
+  if (!zones.length) zones = [selected, 'UTC'];
+  if (!zones.includes(selected)) zones.unshift(selected);
+  return zones.map((z) => `<option value="${esc(z)}" ${z === selected ? 'selected' : ''}>${esc(z)}</option>`).join('');
+}
+
+/** The consequences, in full, before anything is sent. Replaces window.confirm. */
+function showConfirm(ready, trial) {
+  const span = planSpan();
+  const tz = $('p-tz').value;
+  $('publish-body').innerHTML = `
+    <div class="card card--hero">
+      <h3>Schedule ${ready.length} post${ready.length === 1 ? '' : 's'} to Instagram</h3>
+      <p class="hint">
+        <b>${ready.length} videos</b>, one per hook, the same caption on each.<br>
+        ${span ? `<b>First:</b> ${esc(span.firstNice)} · <b>Last:</b> ${esc(span.lastNice)} — ${span.days} day${span.days === 1 ? '' : 's'}, ${esc(tz)}.<br>` : ''}
+        <b>Landing as:</b> ${pub.auto ? 'published automatically, with no approval step' : 'drafts in the Metricool Planner, for you to approve'}.<br>
+        <b>Posting as:</b> ${trial ? 'trial reels — non-followers only' : 'ordinary reels — your followers will see them'}.
+      </p>
+      <div class="banner">
+        The videos are uploaded first and each one checked to be publicly readable. Metricool downloads
+        them <b>at publish time</b>, not now, so they have to stay reachable until ${span ? esc(span.lastNice) : 'the last post'}.
+      </div>
+      <div class="banner bad">
+        <b>reelsmith can't cancel these afterwards.</b> To change or delete a post once it's on the
+        calendar, use the Metricool Planner.
       </div>
       <div class="actions">
-        <button class="btn ghost" id="btn-preview">Preview timings</button>
-        <button class="btn" id="btn-publish" ${rendered === 0 ? 'disabled' : ''}>Upload &amp; schedule</button>
+        <button class="btn ghost" id="c-cancel">Back</button>
+        <button class="btn" id="c-go">Upload and schedule ${ready.length} post${ready.length === 1 ? '' : 's'}</button>
       </div>
-      <p class="hint" style="margin-top:12px">
-        Scheduled posts land in Metricool as drafts you approve, unless you tick this:
-        <label style="display:inline-flex;gap:7px;align-items:center;margin-top:8px;color:var(--text)">
-          <input type="checkbox" id="p-auto" style="width:auto" /> publish automatically, no approval
-        </label>
-      </p>
       <div id="publish-log"></div>
     </div>`;
 
-  const opts = () => {
-    const [ws, we] = $('p-window').value.split('-').map(Number);
-    return {
-      slug: current.slug,
-      timezone: $('p-tz').value.trim(),
-      start: $('p-start').value,
-      gapMinutes: Number($('p-gap').value) * 60,
-      dailyCap: Number($('p-cap').value),
-      windowStartHour: ws, windowEndHour: we,
-      autoPublish: $('p-auto').checked,
-    };
-  };
-
-  $('btn-preview').onclick = async () => {
-    const { jobId } = await api('/api/schedule', { method: 'POST', body: { ...opts(), dryRun: true } });
-    await runJob(jobId, $('publish-log'));
-  };
-
-  $('btn-publish').onclick = async () => {
-    if (!confirm('This uploads the videos and puts them on the Metricool calendar. Continue?')) return;
-    $('btn-publish').disabled = true;
+  $('c-cancel').onclick = renderPublish;
+  $('c-go').onclick = async () => {
+    $('c-go').disabled = true;
+    $('c-go').textContent = 'Uploading…';
     try {
       const up = await api('/api/upload', { method: 'POST', body: { slug: current.slug, covers: true } });
       const upJob = await runJob(up.jobId, $('publish-log'));
-      if (upJob.status === 'error') return;
-      const sch = await api('/api/schedule', { method: 'POST', body: { ...opts(), dryRun: false } });
-      await runJob(sch.jobId, $('publish-log'));
-    } finally {
-      $('btn-publish').disabled = false;
+      if (upJob.status === 'error') { $('c-go').disabled = false; $('c-go').textContent = 'Try again'; return; }
+
+      $('c-go').textContent = 'Scheduling…';
+      const sch = await api('/api/schedule', { method: 'POST', body: { ...paceOptions(), dryRun: false } });
+      const schJob = await runJob(sch.jobId, $('publish-log'));
       await refresh();
+      await openProject(current.slug);
+      if (schJob.status === 'error') { $('c-go').disabled = false; $('c-go').textContent = 'Try again'; return; }
+      renderPublish();
+    } catch (err) {
+      complain($('publish-log'), err.message);
+      $('c-go').disabled = false;
+      $('c-go').textContent = 'Try again';
+    }
+  };
+}
+
+/** After scheduling: what went where, and what has to stay true for it to work. */
+function renderReceipt(done) {
+  const times = done.map((v) => v.publishAt).filter(Boolean).sort();
+  const last = times.length ? new Date(times[times.length - 1]).toLocaleString(undefined,
+    { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'the last post';
+  const auto = done.some((v) => v.autoPublish);
+
+  const days = {};
+  for (const v of done) {
+    const day = (v.publishAt || '').slice(0, 10);
+    (days[day] = days[day] || []).push(v);
+  }
+  const fmtDay = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString(undefined,
+    { weekday: 'short', day: 'numeric', month: 'short' });
+
+  $('publish-body').innerHTML = `
+    <div class="card card--hero">
+      <h3>${done.length} post${done.length === 1 ? '' : 's'} scheduled</h3>
+      <p class="hint">${auto
+        ? 'They publish automatically at the times below.'
+        : 'They are <b>drafts</b> — nothing publishes until you approve each one in the Metricool Planner.'}</p>
+      ${Object.keys(days).sort().map((day) => `
+        <div class="day">
+          <h4>${esc(fmtDay(day))}</h4>
+          ${days[day].map((v) => `<div class="slot">
+            <span class="t">${esc((v.publishAt || '').slice(11, 16))}</span>
+            ${v.rendered ? `<img src="${esc(v.coverUrl)}" alt="" onerror="this.style.visibility='hidden'" />` : ''}
+            <span class="hk">${esc(v.text)}</span>
+            <span class="count">${v.postId ? 'post ' + esc(v.postId) : 'no id returned'}</span>
+          </div>`).join('')}
+        </div>`).join('')}
+    </div>
+
+    <div class="card">
+      <h3>These files must stay online until ${esc(last)}</h3>
+      <p class="hint">
+        Metricool downloads each video when it publishes, not now. Deleting them from the bucket, or
+        making it private, turns these into failed posts with no warning.
+      </p>
+      <div class="actions">
+        <button class="btn ghost" id="btn-recheck">Re-check all ${done.length}</button>
+        <span class="count" id="recheck-out"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>What happens next</h3>
+      <p class="hint">Once these have run, rank the hooks to see which framing won:</p>
+      <code>npm run reel -- rank --project content/${esc(current.slug)}</code>
+    </div>`;
+
+  $('btn-recheck').onclick = async () => {
+    const out = $('recheck-out');
+    out.textContent = 'Checking…';
+    try {
+      const res = await api('/api/recheck', { method: 'POST', body: { slug: current.slug } });
+      out.textContent = res.unreachable.length === 0
+        ? `All ${res.checked} still reachable.`
+        : `${res.unreachable.length} not reachable: ${res.unreachable.join(', ')}`;
+      out.className = 'count' + (res.unreachable.length ? ' over' : '');
+    } catch (err) {
+      out.textContent = err.message;
+      out.className = 'count over';
     }
   };
 }

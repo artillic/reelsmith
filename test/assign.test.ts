@@ -90,3 +90,19 @@ test('with no pool it falls back to the tagged library', () => {
   const got = assignClips(paths(), spec({ hooks, brollPool: [] }), hooks);
   assert.equal(got.get('1'), a);
 });
+
+test('the schedule order is stable for a project but not always seed-first', async () => {
+  const { shuffleBySlug } = await import('../src/pipeline.ts');
+  const items = ['seed', 'a', 'b', 'c', 'd', 'e'];
+
+  // Stable: a dry-run preview must match what actually gets scheduled.
+  assert.deepEqual(shuffleBySlug(items, 'my-project'), shuffleBySlug(items, 'my-project'));
+  assert.deepEqual([...shuffleBySlug(items, 'x')].sort(), [...items].sort(), 'nothing lost or duplicated');
+
+  // Across projects the seed hook must not monopolise the first slot, or
+  // time-of-day is perfectly correlated with hook identity in every test.
+  const slugs = Array.from({ length: 40 }, (_, i) => `project-${i}`);
+  const seedFirst = slugs.filter((slug) => shuffleBySlug(items, slug)[0] === 'seed').length;
+  assert.ok(seedFirst < slugs.length, 'the seed hook cannot always be first');
+  assert.ok(seedFirst > 0, 'nor should it never be first');
+});
