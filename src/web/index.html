@@ -130,7 +130,7 @@
 </head>
 <body>
 <header>
-  <h1>reelsmith <span>— trial reel studio</span></h1>
+  <h1>reelsmith <span>— trial reel studio</span> <span id="version" class="count"></span></h1>
   <div class="pills" id="pills"></div>
 </header>
 
@@ -372,6 +372,7 @@ function fillSettings() {
 
 async function refresh() {
   state = await api('/api/state');
+  $('version').textContent = state.version ? 'v' + state.version : '';
   renderChecks();
   fillSettings();
   renderProjects();
@@ -402,10 +403,22 @@ async function saveSettings(msgEl) {
 /* ---------------------------------------------------------------- jobs -- */
 
 function renderLog(target, job) {
-  target.innerHTML = `<div class="log">${job.lines
+  // A failure gets its own banner above the log. Burying it as one red line in a
+  // scrolling box is how a real error reads as "nothing happened".
+  const banner = job.status === 'error'
+    ? `<div class="banner bad"><b>That didn't work.</b><br>${esc(job.error || 'Unknown error')}</div>`
+    : '';
+  target.innerHTML = banner + `<div class="log">${job.lines
     .map((l) => `<div class="l-${l.kind}">${esc(l.text)}</div>`).join('')}</div>`;
   const box = target.querySelector('.log');
   box.scrollTop = box.scrollHeight;
+  if (job.status === 'error') target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+/** Never fail silently: say what is wrong, where the user is looking. */
+function complain(target, message) {
+  target.innerHTML = `<div class="banner bad">${esc(message)}</div>`;
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 async function runJob(jobId, target, onDone) {
@@ -791,11 +804,17 @@ $('caption').oninput = () => {
 $('btn-ideate').onclick = async () => {
   const seedHook = $('seedHook').value.trim();
   const caption = $('caption').value;
-  if (!seedHook || !caption.trim()) {
-    $('ideate-log').innerHTML = '<div class="banner bad">Write your caption and your hook first.</div>';
-    return;
+  const out = $('ideate-log');
+
+  if (!caption.trim()) return complain(out, 'Paste your caption first — the list of reasons.');
+  if (!seedHook) return complain(out, 'Write your hook — for example "22 reasons to move to Thailand".');
+  if (!state.checks.anthropic || !state.checks.anthropic.ok) {
+    return complain(out, 'No Anthropic API key set. Add one on the Setup screen, then try again.');
   }
+
   $('btn-ideate').disabled = true;
+  $('btn-ideate').textContent = 'Working...';
+  out.innerHTML = '<div class="log">Starting...</div>';
   try {
     const { jobId, slug } = await api('/api/ideate', {
       method: 'POST',
@@ -814,9 +833,10 @@ $('btn-ideate').onclick = async () => {
       show('review');
     }
   } catch (err) {
-    $('ideate-log').innerHTML = `<div class="banner bad">${esc(err.message)}</div>`;
+    complain($('ideate-log'), err.message);
   } finally {
     $('btn-ideate').disabled = false;
+    $('btn-ideate').textContent = 'Write the variations';
   }
 };
 

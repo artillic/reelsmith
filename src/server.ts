@@ -40,6 +40,21 @@ import {
 import type { ReelSpec } from './types.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Surfaced in the dashboard header. Diagnosing "nothing happened" is guesswork
+ * without knowing which build the browser is actually running.
+ */
+function appVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8')) as {
+      version?: string;
+    };
+    return pkg.version ?? 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
 const CONTENT_ROOT = 'content';
 
 /** Settings the dashboard can read and write. Secrets are masked on the way out. */
@@ -227,7 +242,12 @@ async function handleApi(ctx: Ctx): Promise<unknown> {
   const method = req.method ?? 'GET';
 
   if (path === '/api/state' && method === 'GET') {
-    return { settings: readSettings(), checks: await buildChecks(), projects: listProjects() };
+    return {
+      version: appVersion(),
+      settings: readSettings(),
+      checks: await buildChecks(),
+      projects: listProjects(),
+    };
   }
 
   if (path === '/api/settings' && method === 'POST') {

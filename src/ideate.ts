@@ -89,16 +89,22 @@ export async function generateHookVariants(opts: HookVariantOptions): Promise<Ho
   if (opts.caption.trim() === '') throw new UserError('Paste your caption first.');
 
   const client = new Anthropic();
-  const response = await client.messages.parse({
-    model: MODEL,
-    max_tokens: 8000,
-    // Thinking is on by default on Claude Opus 5; stated explicitly so the
-    // max_tokens headroom above is obviously deliberate.
-    thinking: { type: 'adaptive' },
-    system: systemPrompt(),
-    messages: [{ role: 'user', content: userPrompt(opts) }],
-    output_config: { format: zodOutputFormat(VariantSchema) },
-  });
+
+  let response;
+  try {
+    response = await client.messages.parse({
+      model: MODEL,
+      max_tokens: 8000,
+      // Thinking is on by default on Claude Opus 5; stated explicitly so the
+      // max_tokens headroom above is obviously deliberate.
+      thinking: { type: 'adaptive' },
+      system: systemPrompt(),
+      messages: [{ role: 'user', content: userPrompt(opts) }],
+      output_config: { format: zodOutputFormat(VariantSchema) },
+    });
+  } catch (err) {
+    throw explainApiError(err);
+  }
 
   if (response.stop_reason === 'refusal') {
     throw new UserError(
@@ -133,6 +139,50 @@ export async function generateHookVariants(opts: HookVariantOptions): Promise<Ho
   if (variants.length === 0) throw new UserError('The model returned no usable variants.');
 
   return [seed, ...withIds(variants)];
+}
+
+/**
+ * Turns SDK errors into something a person can act on. The raw shape is a JSON
+ * blob that reads as noise in the dashboard, and the fix is almost always a
+ * specific one-line instruction.
+ */
+function explainApiError(err: unknown): Error {
+  if (err instanceof Anthropic.AuthenticationError) {
+    return new UserError(
+      'Anthropic rejected your API key. Check it on the Setup screen — keys start with "sk-ant-".',
+    );
+  }
+  if (err instanceof Anthropic.PermissionDeniedError) {
+    return new UserError(
+      'Your Anthropic API key does not have access to this model. Check the key\'s permissions.',
+    );
+  }
+  if (err instanceof Anthropic.RateLimitError) {
+    return new UserError('Anthropic rate-limited the request. Wait a minute and try again.');
+  }
+  if (err instanceof Anthropic.BadRequestError) {
+    const message = err.message.toLowerCase();
+    if (message.includes('credit') || message.includes('billing')) {
+      return new UserError(
+        'Your Anthropic account is out of credit. Top it up at console.anthropic.com, then try again.',
+      );
+    }
+    return new UserError(`Anthropic rejected the request: ${err.message}`);
+  }
+  if (err instanceof Anthropic.APIConnectionError) {
+    return new UserError('Could not reach Anthropic. Check your internet connection and try again.');
+  }
+  // APIConnectionError is checked above: in the TypeScript SDK it subclasses
+  // APIError, so the order matters.
+  if (err instanceof Anthropic.APIError) {
+    const status = err.status ?? 0;
+    return new UserError(
+      status >= 500
+        ? 'Anthropic is having trouble right now. Try again in a moment.'
+        : `Anthropic returned ${status}: ${err.message}`,
+    );
+  }
+  return err instanceof Error ? err : new Error(String(err));
 }
 
 /** Ids become filenames, so collisions have to be resolved rather than tolerated. */
