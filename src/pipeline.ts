@@ -146,7 +146,13 @@ export async function runRender(
     const coverPath = join(paths.out, `${hook.id}.jpg`);
 
     await renderHookCard(
-      { text: hook.text, width: config.width, height: config.height },
+      {
+        text: hook.text,
+        width: config.width,
+        height: config.height,
+        style: spec.style ?? 'panel',
+        position: spec.position ?? 'top',
+      },
       overlayPath,
     );
     await renderVariant({

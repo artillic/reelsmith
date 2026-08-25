@@ -1,11 +1,19 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { readFileSync, existsSync, readdirSync, statSync, createReadStream } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, statSync, createReadStream, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve, basename, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { updateEnvFile, optionalEnv } from './config.ts';
 import { checkCaption } from './caption.ts';
 import { UserError } from './log.ts';
-import { assertFfmpeg } from './render.ts';
+import { assertFfmpeg, extractCover } from './render.ts';
+import {
+  renderHookCardBuffer,
+  HOOK_STYLES,
+  HOOK_POSITIONS,
+  type HookStyle,
+  type HookPosition,
+} from './overlay.ts';
 import { indexLibrary } from './broll.ts';
 import { listBrands, loadAccountCredentials } from './metricool.ts';
 import { runProbe, findKeys } from './probe.ts';
@@ -449,6 +457,78 @@ function serveMedia(url: URL, res: ServerResponse): boolean {
   return true;
 }
 
+/**
+ * Renders the hook card at preview size, over a frame of the chosen clip when
+ * ffmpeg is available. Lets the author judge wrapping, size and collision with
+ * the footage without waiting on a full encode.
+ */
+async function servePreview(url: URL, res: ServerResponse): Promise<boolean> {
+  if (url.pathname !== '/api/preview') return false;
+
+  const width = 405;
+  const height = 720;
+  const text = url.searchParams.get('text') ?? '';
+  const style = (url.searchParams.get('style') ?? 'panel') as HookStyle;
+  const position = (url.searchParams.get('position') ?? 'top') as HookPosition;
+  const clip = url.searchParams.get('clip') ?? '';
+
+  try {
+    const { default: sharp } = await import('sharp');
+    const card = await renderHookCardBuffer({
+      text: text === '' ? 'Your hook goes here' : text,
+      width,
+      height,
+      style: HOOK_STYLES.includes(style) ? style : 'panel',
+      position: HOOK_POSITIONS.includes(position) ? position : 'top',
+    });
+
+    const background = await previewBackground(clip, width, height);
+    const png = await sharp(background)
+      .composite([{ input: card, top: 0, left: 0 }])
+      .png()
+      .toBuffer();
+
+    res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
+    res.end(png);
+  } catch (err) {
+    res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end(err instanceof Error ? err.message : 'preview failed');
+  }
+  return true;
+}
+
+/**
+ * A frame of the real clip when we can get one, otherwise flat grey. The clip
+ * path is checked against the indexed library rather than trusted, so this
+ * cannot be turned into an arbitrary file read.
+ */
+async function previewBackground(clip: string, width: number, height: number): Promise<Buffer> {
+  const { default: sharp } = await import('sharp');
+  const flat = await sharp({
+    create: { width, height, channels: 3, background: { r: 74, g: 78, b: 86 } },
+  })
+    .png()
+    .toBuffer();
+
+  if (clip === '') return flat;
+  const known = libraryRoots().flatMap((root) => indexLibrary(root)).some((c) => c.path === clip);
+  if (!known) return flat;
+
+  const framePath = join(tmpdir(), `reelsmith-preview-${process.pid}.jpg`);
+  try {
+    await extractCover(clip, framePath, 0.5);
+    const frame = await sharp(framePath)
+      .resize(width, height, { fit: 'cover' })
+      .png()
+      .toBuffer();
+    rmSync(framePath, { force: true });
+    return frame;
+  } catch {
+    rmSync(framePath, { force: true });
+    return flat;
+  }
+}
+
 async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(chunk as Buffer);
@@ -474,6 +554,10 @@ export function startServer(port: number): Promise<string> {
       return;
     }
     if (serveMedia(url, res)) return;
+    if (url.pathname === '/api/preview') {
+      void servePreview(url, res);
+      return;
+    }
 
     if (url.pathname.startsWith('/api/')) {
       void (async () => {

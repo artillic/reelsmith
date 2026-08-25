@@ -15,6 +15,11 @@ variant, because a caption that changes alongside the hook makes the test
 meaningless. Nothing is rewritten, reordered or trimmed — an over-long caption
 is reported, not repaired.
 
+**The hook's look is a project-level choice, not a test variable.** Four styles
+(panel, outline, banner, lower third) and three positions, previewed live in the
+dashboard over a frame of the actual clip — so wrapping and collisions are
+visible before any encoding happens.
+
 **Variants keep the hook's shape.** From `22 reasons to move to Thailand` you
 get `22 reasons why Thailand is the best place to start a business` and
 `22 reasons why you should move to Thailand while you're young` — same number,

@@ -1,3 +1,5 @@
+import type { HookStyle, HookPosition } from './overlay.ts';
+
 export interface HookVariant {
   /** Stable within a project. Used for filenames and performance ranking. */
   id: string;
@@ -30,6 +32,10 @@ export interface ReelSpec {
   /** The hook every variant is a rewrite of. */
   seedHook: string;
   hooks: HookVariant[];
+
+  /** How the burned-in hook looks. Applies to every variant, so it is not a test variable. */
+  style?: HookStyle;
+  position?: HookPosition;
 
   /** @deprecated Superseded by `caption`; kept so older projects still load. */
   reasons?: string[];

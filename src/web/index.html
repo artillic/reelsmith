@@ -102,7 +102,7 @@
   .log .l-info { color: var(--muted); }
 
   .variant { display: grid; grid-template-columns: 150px 1fr; gap: 16px; }
-  .variant video, .variant .placeholder {
+  .variant video, .variant .placeholder, .variant .preview {
     width: 150px; aspect-ratio: 9/16; border-radius: 8px; background: var(--panel-2);
     border: 1px solid var(--line); object-fit: cover;
   }
@@ -499,10 +499,32 @@ async function renderReview() {
   $('review-body').innerHTML = `
     ${problems.length ? `<div class="banner bad">${problems.map(esc).join('<br>')}</div>` : ''}
     <div class="card">
+      <h3>Text style</h3>
+      <p class="hint">How the hook is burned onto the video. Same on every variant, so it isn't part of the test.</p>
+      <div class="row">
+        <div><label>Style</label>
+          <select id="hook-style">
+            <option value="panel">Panel — text on a dark box</option>
+            <option value="outline">Outline — text with a heavy edge</option>
+            <option value="banner">Banner — dark text on white bars</option>
+            <option value="lower-third">Lower third — smaller, near the bottom</option>
+          </select>
+        </div>
+        <div><label>Position</label>
+          <select id="hook-position">
+            <option value="top">Top</option>
+            <option value="middle">Middle</option>
+            <option value="lower">Lower</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
       <h3>${esc(spec.seedHook || spec.topic)}</h3>
       <p class="hint">
         ${variants.length} variant(s). Same caption and same length on each — the hook and the
-        footage are the only things that change.
+        footage are the only things that change. The stills below are live previews, not renders.
       </p>
       <div id="variants"></div>
       <div class="actions">
@@ -534,7 +556,7 @@ async function renderReview() {
     <div class="card variant">
       ${v.rendered
         ? `<video src="${esc(v.videoUrl)}" controls preload="metadata" poster="${esc(v.coverUrl)}"></video>`
-        : `<div class="placeholder">not made yet</div>`}
+        : `<img class="preview" data-preview="${i}" alt="preview of the hook" />`}
       <div>
         <span class="tag">${esc(v.variation || v.angle || 'variant')}</span>
         <label>Hook (burned onto the video)</label>
@@ -549,11 +571,17 @@ async function renderReview() {
 
   $('variants').oninput = (e) => {
     const hookEl = e.target.closest('[data-hook]');
-    if (hookEl) current.spec.hooks[Number(hookEl.dataset.hook)].text = hookEl.value;
+    if (hookEl) {
+      current.spec.hooks[Number(hookEl.dataset.hook)].text = hookEl.value;
+      refreshPreviews();
+    }
   };
   $('variants').onchange = (e) => {
     const clipEl = e.target.closest('[data-clip]');
-    if (clipEl) current.spec.hooks[Number(clipEl.dataset.clip)].brollPath = clipEl.value || null;
+    if (clipEl) {
+      current.spec.hooks[Number(clipEl.dataset.clip)].brollPath = clipEl.value || null;
+      refreshPreviews();
+    }
   };
   $('variants').onclick = (e) => {
     const el = e.target.closest('[data-del]');
@@ -563,6 +591,17 @@ async function renderReview() {
     current.variants.splice(i, 1);
     renderReview();
   };
+
+  // Style is a spec-level choice, so changing it refreshes every preview.
+  $('hook-style').value = spec.style || 'panel';
+  $('hook-position').value = spec.position || 'top';
+  const onLook = () => {
+    current.spec.style = $('hook-style').value;
+    current.spec.position = $('hook-position').value;
+    refreshPreviews();
+  };
+  $('hook-style').onchange = onLook;
+  $('hook-position').onchange = onLook;
 
   $('btn-save-spec').onclick = () => saveSpec($('spec-msg'));
   $('btn-save-caption').onclick = () => saveSpec($('caption-count'));
@@ -581,6 +620,29 @@ async function renderReview() {
   };
   $('caption-edit').oninput = updateCount;
   updateCount();
+  refreshPreviews();
+}
+
+let previewTimer = null;
+
+function refreshPreviews() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => {
+    for (const img of document.querySelectorAll('[data-preview]')) {
+      const i = Number(img.dataset.preview);
+      const hook = current.spec.hooks[i];
+      if (!hook) continue;
+      const q = new URLSearchParams({
+        text: hook.text || '',
+        style: current.spec.style || 'panel',
+        position: current.spec.position || 'top',
+        clip: hook.brollPath || '',
+        // Cache-buster: the URL is the only thing that changes as you type.
+        t: String(Date.now()),
+      });
+      img.src = '/api/preview?' + q.toString();
+    }
+  }, 250);
 }
 
 async function saveSpec(msgEl) {
