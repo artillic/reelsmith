@@ -669,7 +669,10 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
 /* --------------------------------------------------------------- start --- */
 
 export function startServer(port: number): Promise<string> {
-  const html = readFileSync(join(HERE, 'web', 'index.html'), 'utf8');
+  const htmlPath = join(HERE, 'web', 'index.html');
+  // Read per request rather than once at boot: this is a local tool, the file
+  // is small, and caching it meant every edit needed a server restart.
+  const readHtml = () => readFileSync(htmlPath, 'utf8');
 
   const server = createServer((req, res) => {
     // A browser that navigates away mid-request destroys the socket. Without
@@ -681,7 +684,7 @@ export function startServer(port: number): Promise<string> {
 
     if (url.pathname === '/' || url.pathname === '/index.html') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-      res.end(html);
+      res.end(readHtml());
       return;
     }
     if (serveMedia(url, res)) return;

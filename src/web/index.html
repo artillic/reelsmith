@@ -664,6 +664,8 @@ async function saveSettings(msgEl) {
 let activityOpen = false;
 let lastSeenJobId = null;
 let lastActivitySig = null;
+/** Set while a multi-step user action owns the screen (upload then schedule). */
+let uiBusy = false;
 
 /** True while focus is inside a control, so background refreshes leave it alone. */
 function isEditing() {
@@ -702,7 +704,10 @@ async function pollActivity() {
         if ($('s-review').classList.contains('active')) await renderReview();
         // Publish holds live form state; rebuilding it mid-edit closes pickers
         // and discards what the user was typing.
-        if ($('s-publish').classList.contains('active') && !isEditing()) renderPublish();
+        // Not while a commit is running: the upload job finishing would
+        // otherwise re-render Publish and destroy the confirmation panel
+        // the scheduling step is still using.
+        if ($('s-publish').classList.contains('active') && !isEditing() && !uiBusy) renderPublish();
       }
     }
 
@@ -1132,20 +1137,38 @@ const PACE = [
   { id: 'one', label: 'One a day', cap: 1 },
 ];
 
-let pub = { pace: 'two', winStart: 9, winEnd: 21, auto: false, plan: null, planning: false };
+let pub = {
+  pace: 'two', winStart: 9, winEnd: 21, auto: false, plan: null, planning: false,
+  // Survive the form being replaced by the confirmation panel.
+  start: '', timezone: 'UTC',
+};
 
 /**
  * The gap is derived, not asked for. Window divided by pace spreads posts
  * evenly across the day instead of clustering at its start, and makes the
  * "gap doesn't fit in the window" error unreachable.
+ *
+ * The confirmation panel replaces the form, so by the time the user commits,
+ * #p-start and #p-tz are gone from the DOM. Every successful read is therefore
+ * cached, and reads fall back to that cache rather than to an empty string —
+ * which previously reached the server as start: "" and failed the schedule
+ * after the upload had already run.
  */
 function paceOptions() {
   const cap = (PACE.find((p) => p.id === pub.pace) || PACE[2]).cap;
   const gap = Math.max(30, Math.floor(((pub.winEnd - pub.winStart) * 60) / cap));
+  const startEl = $('p-start');
+  const tzEl = $('p-tz');
+
+  const start = startEl && startEl.value ? startEl.value : pub.start;
+  const timezone = tzEl && tzEl.value ? tzEl.value : pub.timezone;
+  pub.start = start;
+  pub.timezone = timezone;
+
   return {
     slug: current.slug,
-    timezone: $('p-tz') ? $('p-tz').value : 'UTC',
-    start: $('p-start') ? $('p-start').value : '',
+    timezone,
+    start,
     gapMinutes: gap,
     dailyCap: Math.min(cap, 50),
     windowStartHour: pub.winStart,
@@ -1276,6 +1299,9 @@ function renderPublish() {
     </div>
     <div id="publish-log"></div>`;
 
+  pub.start = $('p-start').value;
+  pub.timezone = $('p-tz').value;
+
   $('p-pace').onclick = (e) => {
     const b = e.target.closest('[data-pace]');
     if (!b) return;
@@ -1334,25 +1360,42 @@ function showConfirm(ready, trial) {
     </div>`;
 
   $('c-cancel').onclick = renderPublish;
+  const committed = paceOptions();
+
+  // The button may be gone by the time an await resolves, so never assume it.
+  const setGo = (label, disabled) => {
+    const el = $('c-go');
+    if (!el) return;
+    el.textContent = label;
+    el.disabled = disabled;
+  };
+
   $('c-go').onclick = async () => {
-    $('c-go').disabled = true;
-    $('c-go').textContent = 'Uploading…';
+    if (!committed.start) {
+      return complain($('publish-log'), 'No start time is set. Go back and pick when the first post goes out.');
+    }
+    uiBusy = true;
+    setGo('Uploading…', true);
     try {
       const up = await api('/api/upload', { method: 'POST', body: { slug: current.slug, covers: true } });
       const upJob = await runJob(up.jobId, $('publish-log'));
-      if (upJob.status === 'error') { $('c-go').disabled = false; $('c-go').textContent = 'Try again'; return; }
+      if (upJob.status === 'error') { setGo('Try again', false); return; }
 
-      $('c-go').textContent = 'Scheduling…';
-      const sch = await api('/api/schedule', { method: 'POST', body: { ...paceOptions(), dryRun: false } });
+      setGo('Scheduling…', true);
+      // The options captured while the form still existed, not re-read from a
+      // DOM the confirmation panel has already replaced.
+      const sch = await api('/api/schedule', { method: 'POST', body: { ...committed, dryRun: false } });
       const schJob = await runJob(sch.jobId, $('publish-log'));
       await refresh();
       await openProject(current.slug);
-      if (schJob.status === 'error') { $('c-go').disabled = false; $('c-go').textContent = 'Try again'; return; }
+      if (schJob.status === 'error') { setGo('Try again', false); return; }
+      uiBusy = false;
       renderPublish();
     } catch (err) {
       complain($('publish-log'), err.message);
-      $('c-go').disabled = false;
-      $('c-go').textContent = 'Try again';
+      setGo('Try again', false);
+    } finally {
+      uiBusy = false;
     }
   };
 }

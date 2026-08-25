@@ -265,7 +265,19 @@ schedule one trial reel and one ordinary reel and diff their objects.
 ## Tests
 
 ```sh
-npm run check    # typecheck + tests
+npm run check    # typecheck + unit tests
+npm run test:ui  # browser regression suite (opt-in, needs playwright)
+```
+
+The unit suite covers pure logic. It cannot see the class of bug that has
+actually shipped here — a silent failure, a screen re-rendering itself on a
+timer, state lost on reload, a panel destroying the form the next step reads
+from. `test/e2e/dashboard.cjs` drives the real dashboard in a browser and each
+check there corresponds to a bug that reached the user. It skips cleanly when
+playwright is absent:
+
+```sh
+npm i -D playwright && npx playwright install chromium
 ```
 
 Covers the pure logic: caption limits, schedule planning, text wrapping and SVG

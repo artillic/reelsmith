@@ -16,7 +16,8 @@
     "reel": "node --experimental-strip-types src/cli.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --experimental-strip-types --test test/*.test.ts",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "test:ui": "node test/e2e/dashboard.cjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",
