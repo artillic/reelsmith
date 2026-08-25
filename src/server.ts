@@ -452,7 +452,7 @@ async function handleApi(ctx: Ctx): Promise<unknown> {
         },
         log,
       );
-    }, spec.slug);
+    }, spec.slug, dryRun);
     return { jobId: job.id };
   }
 

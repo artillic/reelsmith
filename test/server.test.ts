@@ -4,7 +4,7 @@ import { maskSecret, applySettings, metricoolCheck, storageCheck } from '../src/
 import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startJob, getJob, resetJobs } from '../src/jobs.ts';
+import { startJob, getJob, listJobs, resetJobs } from '../src/jobs.ts';
 import { libraryRoots, libraryRootsDetailed } from '../src/pipeline.ts';
 
 beforeEach(() => {
@@ -122,4 +122,26 @@ test('a failing job records the error instead of rejecting', async () => {
   assert.equal(finished?.status, 'error');
   assert.equal(finished?.error, 'it broke');
   assert.equal(finished?.lines.at(-1)?.kind, 'error');
+});
+
+test('internal jobs stay out of the activity feed', async () => {
+  startJob('user asked for this', async () => 'a', 'slug-1');
+  startJob('background preview', async () => 'b', 'slug-1', true);
+  await new Promise((r) => setTimeout(r, 20));
+
+  const feed = listJobs();
+  assert.equal(feed.length, 1, 'only the user-initiated job is listed');
+  assert.equal(feed[0]?.label, 'user asked for this');
+});
+
+test('an internal job is still retrievable by id, so its result can be read', async () => {
+  const job = startJob('background preview', async () => ({ ok: true }), 'slug-1', true);
+  await new Promise((r) => setTimeout(r, 20));
+
+  // The timeline polls its own preview job directly; it just must not appear
+  // in the feed, whose completions trigger a screen refresh.
+  const fetched = getJob(job.id);
+  assert.equal(fetched?.status, 'done');
+  assert.deepEqual(fetched?.result, { ok: true });
+  assert.equal(listJobs().some((entry) => entry.id === job.id), false);
 });

@@ -656,6 +656,13 @@ async function saveSettings(msgEl) {
 
 let activityOpen = false;
 let lastSeenJobId = null;
+let lastActivitySig = null;
+
+/** True while focus is inside a control, so background refreshes leave it alone. */
+function isEditing() {
+  const el = document.activeElement;
+  return !!el && /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName);
+}
 
 function ago(ms) {
   const s = Math.round(ms / 1000);
@@ -686,9 +693,17 @@ async function pollActivity() {
       if (current && latest.slug === current.slug) {
         await openProject(current.slug);
         if ($('s-review').classList.contains('active')) await renderReview();
-        if ($('s-publish').classList.contains('active')) renderPublish();
+        // Publish holds live form state; rebuilding it mid-edit closes pickers
+        // and discards what the user was typing.
+        if ($('s-publish').classList.contains('active') && !isEditing()) renderPublish();
       }
     }
+
+    // Only touch the DOM when something actually changed; a once-a-second
+    // innerHTML rewrite fights the user for focus.
+    const signature = [job.id, job.status, job.lines.length, activityOpen].join('|');
+    if (signature === lastActivitySig) return;
+    lastActivitySig = signature;
 
     const elapsed = ago((job.finishedAt || Date.now()) - job.startedAt);
     const icon = job.status === 'running'

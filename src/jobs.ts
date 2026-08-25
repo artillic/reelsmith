@@ -24,6 +24,13 @@ export interface Job {
   error: string | null;
   startedAt: number;
   finishedAt: number | null;
+  /**
+   * Background work the user did not ask for — the schedule preview replans on
+   * every control change. Internal jobs are excluded from the activity feed:
+   * showing them there made each one's completion trigger a re-render, which
+   * started another, once per second, forever.
+   */
+  internal: boolean;
 }
 
 const jobs = new Map<string, Job>();
@@ -35,16 +42,20 @@ export function getJob(id: string): Job | undefined {
 
 /** Most recent first, so the dashboard can show what just happened. */
 export function listJobs(): Job[] {
-  return [...jobs.values()].sort((a, b) => b.startedAt - a.startedAt).slice(0, 20);
+  return [...jobs.values()]
+    .filter((job) => !job.internal)
+    .sort((a, b) => b.startedAt - a.startedAt)
+    .slice(0, 20);
 }
 
 export function startJob(
   label: string,
   run: (log: PipelineLogger) => Promise<unknown>,
   slug: string | null = null,
-  now: () => number = Date.now,
+  internal = false,
 ): Job {
   counter += 1;
+  const now = Date.now;
   const job: Job = {
     id: `job-${counter}`,
     label,
@@ -55,6 +66,7 @@ export function startJob(
     error: null,
     startedAt: now(),
     finishedAt: null,
+    internal,
   };
   jobs.set(job.id, job);
 
