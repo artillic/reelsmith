@@ -74,9 +74,13 @@ export class MetricoolClient {
     init: { method?: string; params?: Record<string, string>; body?: unknown } = {},
   ): Promise<ApiResponse<T>> {
     const url = this.url(path, init.params ?? {});
+    // `Accept: application/json` made the normalize endpoint answer 500
+    // "No acceptable representation" — a JAX-RS content-negotiation failure,
+    // meaning the endpoint exists but does not produce JSON. Accepting anything
+    // costs nothing: parseResponse already falls back to raw text.
     const headers: Record<string, string> = {
       'X-Mc-Auth': this.creds.token,
-      Accept: 'application/json',
+      Accept: '*/*',
     };
     if (init.body !== undefined) headers['Content-Type'] = 'application/json';
 

@@ -496,14 +496,22 @@ export async function runSchedule(
     }
 
     const mediaUrl = publicMediaUrl(join(paths.out, `${hook.id}.mp4`));
+
+    // Normalize is a convenience that hands back Metricool's own media handle.
+    // Upload has already proved every file is publicly readable, so if this
+    // call fails the URL itself is still a legitimate thing to post — say so
+    // and carry on rather than abandoning a batch that is otherwise fine.
+    let mediaHandle = mediaUrl;
     const normalized = await client!.normalizeMedia(mediaUrl);
-    if (!normalized.ok) {
-      throw new UserError(
-        `Metricool could not fetch ${mediaUrl} (${normalized.status}). ` +
-          `Confirm the file is publicly reachable.\n${normalized.text.slice(0, 300)}`,
+    if (normalized.ok) {
+      mediaHandle = extractMediaHandle(normalized.data) ?? mediaUrl;
+    } else if (index === 0) {
+      log.warn(
+        `Metricool's normalize step returned ${normalized.status}; posting the public URL ` +
+          'directly instead. If the posts do not appear, this is the first thing to look at.',
       );
+      log.info(normalized.text.slice(0, 200));
     }
-    const mediaHandle = extractMediaHandle(normalized.data) ?? mediaUrl;
 
     const created = await client!.createPost(
       buildPostPayload({

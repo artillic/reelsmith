@@ -126,3 +126,47 @@ test('the probe looks for audio under several plausible names', async () => {
   }
   assert.equal(audio.pattern.test('publicationDate'), false, 'unrelated keys must not match');
 });
+
+test('requests accept any content type, not just JSON', async () => {
+  const { MetricoolClient } = await import('../src/metricool.ts');
+  const seen: { url: string; headers: Record<string, string> }[] = [];
+  const realFetch = globalThis.fetch;
+
+  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+    seen.push({
+      url: String(input),
+      headers: (init?.headers ?? {}) as Record<string, string>,
+    });
+    return new Response('ok', { status: 200, headers: { 'Content-Type': 'text/plain' } });
+  }) as typeof fetch;
+
+  try {
+    const client = new MetricoolClient({ token: 't', userId: '1', blogId: '2' });
+    await client.normalizeMedia('https://cdn.example.com/a.mp4');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  // Forcing application/json made the normalize endpoint answer 500
+  // "No acceptable representation" — it does not produce JSON.
+  assert.equal(seen[0]?.headers['Accept'], '*/*');
+  assert.equal(seen[0]?.headers['X-Mc-Auth'], 't');
+  assert.match(seen[0]?.url ?? '', /userId=1&blogId=2/);
+});
+
+test('a non-JSON response still comes back readable rather than throwing', async () => {
+  const { MetricoolClient } = await import('../src/metricool.ts');
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response('plain text body', { status: 200 })) as typeof fetch;
+
+  try {
+    const client = new MetricoolClient({ token: 't', userId: '1', blogId: '2' });
+    const res = await client.normalizeMedia('https://cdn.example.com/a.mp4');
+    assert.equal(res.ok, true);
+    assert.equal(res.data, null, 'unparseable bodies yield null data');
+    assert.equal(res.text, 'plain text body', 'but the raw text is always available');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
