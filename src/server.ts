@@ -124,6 +124,8 @@ export function applySettings(incoming: Record<string, unknown>): Record<string,
 interface ProjectSummary {
   slug: string;
   topic: string;
+  /** What the author recognises the project by, rather than the b-roll topic. */
+  seedHook: string;
   createdAt: string;
   hookCount: number;
   renderedCount: number;
@@ -142,6 +144,7 @@ function listProjects(): ProjectSummary[] {
       summaries.push({
         slug: entry,
         topic: spec.topic,
+        seedHook: spec.seedHook ?? spec.topic,
         createdAt: spec.createdAt,
         hookCount: spec.hooks.length,
         renderedCount: spec.hooks.filter((h) => existsSync(join(paths.out, `${h.id}.mp4`))).length,

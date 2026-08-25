@@ -105,6 +105,12 @@
   }
   header h1 { font-size: .9375rem; font-weight: 600; margin: 0; letter-spacing: -.004em; }
   header h1 span { color: var(--text-3); font-weight: 400; }
+  #project-switch {
+    width: auto; max-width: 380px; height: 32px; padding: 0 var(--space-3);
+    background: var(--surface-2); border-color: transparent; color: var(--text);
+    font-size: .8125rem; font-weight: 500;
+  }
+  #project-switch:hover { border-color: var(--line-2); }
   .pills { display: flex; gap: var(--space-1); margin-left: auto; flex-wrap: wrap; }
   .pill {
     font-size: .6875rem; font-weight: 600; letter-spacing: .09em; text-transform: uppercase;
@@ -356,7 +362,8 @@
 </head>
 <body>
 <header>
-  <h1>reelsmith <span>— trial reel studio</span> <span id="version" class="count"></span></h1>
+  <h1>reelsmith <span id="version" class="count"></span></h1>
+  <select id="project-switch" aria-label="Current reel"></select>
   <div class="pills" id="pills"></div>
 </header>
 
@@ -521,14 +528,14 @@
     <section id="s-review">
       <h2>Review</h2>
       <p class="sub">Edit anything here. Delete hooks you wouldn't post — that's the main thing this screen is for.</p>
-      <div id="review-body"><div class="empty">Pick or create a reel first.</div></div>
+      <div id="review-body"><div class="empty">Nothing open yet.</div></div>
     </section>
 
     <!-- -------------------------------------------------------- publish -->
     <section id="s-publish">
       <h2>Publish</h2>
       <p class="sub">Preview the timings first. Nothing goes out until you press the publish button.</p>
-      <div id="publish-body"><div class="empty">Pick or create a reel first.</div></div>
+      <div id="publish-body"><div class="empty">Nothing open yet.</div></div>
     </section>
 
   </main>
@@ -619,6 +626,8 @@ async function refresh() {
   renderChecks();
   fillSettings();
   renderProjects();
+  await restoreProject();
+  drawSwitcher();
 }
 
 /* ------------------------------------------------------------ settings -- */
@@ -790,9 +799,44 @@ function renderProjects() {
   };
 }
 
+const LAST_SLUG = 'reelsmith.lastSlug';
+
 async function openProject(slug) {
   current = await api('/api/projects/' + slug);
   current.slug = slug;
+  try { localStorage.setItem(LAST_SLUG, slug); } catch { /* private window */ }
+  drawSwitcher();
+}
+
+function drawSwitcher() {
+  const sel = $('project-switch');
+  if (!state.projects || state.projects.length === 0) {
+    sel.style.display = 'none';
+    return;
+  }
+  sel.style.display = '';
+  sel.innerHTML = state.projects.map((p) =>
+    `<option value="${esc(p.slug)}" ${current && p.slug === current.slug ? 'selected' : ''}>
+      ${esc(p.seedHook || p.topic)} — ${p.renderedCount}/${p.hookCount} made</option>`).join('');
+  sel.onchange = async () => {
+    await openProject(sel.value);
+    const open = SECTIONS.find(([id]) => $('s-' + id).classList.contains('active'));
+    if (open && open[0] === 'review') await renderReview();
+    if (open && open[0] === 'publish') renderPublish();
+  };
+}
+
+/**
+ * Reopens whatever was last worked on. Without this a refresh dropped you on
+ * "pick or create a reel first", with no way to reach an existing project
+ * except via the New reel screen — which is not where finished work lives.
+ */
+async function restoreProject() {
+  if (current || !state.projects || state.projects.length === 0) return;
+  let slug = null;
+  try { slug = localStorage.getItem(LAST_SLUG); } catch { /* ignore */ }
+  if (!slug || !state.projects.some((p) => p.slug === slug)) slug = state.projects[0].slug;
+  try { await openProject(slug); } catch { /* project may have been deleted */ }
 }
 
 /* -------------------------------------------------------------- review -- */
@@ -809,7 +853,7 @@ async function clipOptions() {
 }
 
 async function renderReview() {
-  if (!current) return;
+  if (!current) return emptyState('review-body');
   const { spec, variants, captionCheck } = current;
   const clips = await clipOptions();
 
@@ -1010,6 +1054,32 @@ async function saveSpec(msgEl) {
 
 /* ------------------------------------------------------------- publish -- */
 
+/** A dead end is a bug. Offer the reels that exist, or the way to make one. */
+function emptyState(id) {
+  const has = state.projects && state.projects.length > 0;
+  $(id).innerHTML = `
+    <div class="card card--hero">
+      <h3>${has ? 'Open a reel' : 'No reels yet'}</h3>
+      <p class="hint">${has
+        ? 'Pick one to carry on with, or start a new one.'
+        : 'Start by writing your caption and one hook.'}</p>
+      ${has ? `<div>${state.projects.map((p) => `<div class="clip">
+        <span class="nm">${esc(p.seedHook || p.topic)}</span>
+        <span class="count">${p.renderedCount}/${p.hookCount} made</span>
+        <button class="btn ghost" data-open="${esc(p.slug)}">Open</button></div>`).join('')}</div>` : ''}
+      <div class="actions"><button class="btn" data-new="1">Start a new reel</button></div>
+    </div>`;
+  $(id).onclick = async (e) => {
+    const open = e.target.closest('[data-open]');
+    if (open) {
+      await openProject(open.dataset.open);
+      if (id === 'review-body') await renderReview(); else renderPublish();
+      return;
+    }
+    if (e.target.closest('[data-new]')) show('create');
+  };
+}
+
 function plural(n, word, wordPlural) {
   return `${n} ${n === 1 ? word : wordPlural || word + 's'}`;
 }
@@ -1110,7 +1180,7 @@ function planSpan() {
 }
 
 function renderPublish() {
-  if (!current) return;
+  if (!current) return emptyState('publish-body');
   const tz = (state.settings.REEL_TIMEZONE && state.settings.REEL_TIMEZONE.value) || 'UTC';
   const ready = current.variants.filter((v) => v.stage === 'made' || v.stage === 'uploaded');
   const done = current.variants.filter((v) => v.stage === 'scheduled');
