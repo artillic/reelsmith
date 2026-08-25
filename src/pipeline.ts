@@ -17,6 +17,7 @@ import {
   publicMediaUrl,
 } from './metricool.ts';
 import { ensureProjectDirs, writeSpec, writeScheduleManifest, type ProjectPaths } from './project.ts';
+import { recordRender, readState, updateVariant } from './state.ts';
 import type { ReelSpec, ScheduleManifest, ScheduledVariant, HookVariant } from './types.ts';
 
 /**
@@ -165,9 +166,19 @@ export async function runRender(
     const caption = captionFor(spec, hook.text);
     writeFileSync(join(paths.captions, `${hook.id}.txt`), caption.text, 'utf8');
 
-    log.ok(`${hook.id} — ${basename(clip.path)}`);
+    recordRender(paths, hook.id, {
+      hookText: hook.text,
+      clip: clip.path,
+      style: spec.style ?? 'outline',
+      size: spec.size ?? 'medium',
+      position: spec.position ?? 'top',
+      videoPath,
+    });
+
+    log.ok(`${hook.text}  —  ${basename(clip.path)}`);
     for (const problem of checkCaption(caption.text).problems) log.warn(problem);
   }
+  log.ok(`Done. ${hooks.length} video(s) made.`);
 }
 
 function hasChosenClip(hook: { brollPath?: string | null }): boolean {
@@ -291,10 +302,22 @@ export async function runUpload(
   if (files.length === 0) throw new UserError('No rendered files to upload. Render first.');
 
   log.step(`Uploading ${files.length} file(s) to the "${config.bucket}" bucket`);
+  const state = readState(paths);
   let firstVideoUrl: string | null = null;
   for (const file of files) {
     const result = await uploadObject(config, file);
     if (firstVideoUrl === null && file.endsWith('.mp4')) firstVideoUrl = result.publicUrl;
+
+    if (file.endsWith('.mp4')) {
+      const hookId = basename(file, '.mp4');
+      const renderedAt = state.variants[hookId]?.render?.at;
+      if (renderedAt !== undefined) {
+        updateVariant(paths, hookId, (current) => ({
+          ...current,
+          upload: { at: new Date().toISOString(), url: result.publicUrl, renderedAt },
+        }));
+      }
+    }
     log.ok(`${result.objectName}  (${(result.bytes / 1024 / 1024).toFixed(1)} MB)`);
   }
 
@@ -401,6 +424,21 @@ export async function runSchedule(
     }
 
     const postId = extractPostId(created.data);
+    const renderedAt = readState(paths).variants[hook.id]?.render?.at;
+    if (renderedAt !== undefined) {
+      updateVariant(paths, hook.id, (current) => ({
+        ...current,
+        schedule: {
+          at: new Date().toISOString(),
+          publishAt,
+          timezone: opts.timezone,
+          postId,
+          autoPublish: opts.autoPublish,
+          trialReel: trialField !== undefined,
+          renderedAt,
+        },
+      }));
+    }
     variants.push({
       hookId: hook.id,
       postId,

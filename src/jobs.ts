@@ -16,6 +16,8 @@ export interface JobLine {
 export interface Job {
   id: string;
   label: string;
+  /** Which project this job belongs to, so the UI can reattach after a reload. */
+  slug: string | null;
   status: JobStatus;
   lines: JobLine[];
   result: unknown;
@@ -39,12 +41,14 @@ export function listJobs(): Job[] {
 export function startJob(
   label: string,
   run: (log: PipelineLogger) => Promise<unknown>,
+  slug: string | null = null,
   now: () => number = Date.now,
 ): Job {
   counter += 1;
   const job: Job = {
     id: `job-${counter}`,
     label,
+    slug,
     status: 'running',
     lines: [],
     result: null,

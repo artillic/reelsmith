@@ -134,6 +134,37 @@
   .banner.bad { border-left-color: var(--bad); }
   .banner.ok { border-left-color: var(--ok); }
   code { font-family: var(--mono); font-size: 12px; background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+
+  /* Activity bar: work is server-side, so it survives navigation and reloads. */
+  #activity {
+    position: sticky; top: 53px; z-index: 9; background: var(--panel-2);
+    border-bottom: 1px solid var(--line); padding: 10px 22px; display: none;
+  }
+  #activity.on { display: block; }
+  .act-row { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+  .act-row .spin {
+    width: 12px; height: 12px; border-radius: 99px; flex: none;
+    border: 2px solid var(--line); border-top-color: var(--accent);
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .act-row .dot2 { width: 8px; height: 8px; border-radius: 99px; flex: none; }
+  .act-row .dot2.ok { background: var(--ok); }
+  .act-row .dot2.bad { background: var(--bad); }
+  .act-row .grow { flex: 1; }
+  .act-row .tiny { color: var(--muted); font-size: 12px; }
+  #activity .log { max-height: 190px; margin-top: 10px; }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px; font-size: 11px;
+    border-radius: 99px; padding: 2px 9px; border: 1px solid var(--line); color: var(--muted);
+  }
+  .chip.made { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+  .chip.uploaded { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+  .chip.scheduled { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+  .chip.stale { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+  .chip.failed { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+  .meta { color: var(--muted); font-size: 11.5px; margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -141,6 +172,8 @@
   <h1>reelsmith <span>— trial reel studio</span> <span id="version" class="count"></span></h1>
   <div class="pills" id="pills"></div>
 </header>
+
+<div id="activity"></div>
 
 <div class="shell">
   <nav id="nav"></nav>
@@ -423,6 +456,67 @@ async function saveSettings(msgEl) {
   }
 }
 
+/* ------------------------------------------------------------ activity -- */
+
+let activityOpen = false;
+let lastSeenJobId = null;
+
+function ago(ms) {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  return m + 'm ' + (s % 60) + 's';
+}
+
+/**
+ * Polls the server for jobs forever. Jobs live server-side, so closing the tab,
+ * switching away or reloading loses nothing — the bar simply reattaches.
+ */
+async function pollActivity() {
+  try {
+    const { jobs } = await api('/api/jobs');
+    const running = jobs.find((j) => j.status === 'running');
+    const latest = jobs[0];
+    const job = running || latest;
+    const bar = $('activity');
+
+    if (!job) { bar.className = ''; return; }
+    bar.className = 'on';
+
+    // A job finishing is the moment to refresh what is on screen.
+    if (latest && latest.id !== lastSeenJobId && latest.status !== 'running') {
+      lastSeenJobId = latest.id;
+      await refresh();
+      if (current && latest.slug === current.slug) {
+        await openProject(current.slug);
+        if ($('s-review').classList.contains('active')) await renderReview();
+        if ($('s-publish').classList.contains('active')) renderPublish();
+      }
+    }
+
+    const elapsed = ago((job.finishedAt || Date.now()) - job.startedAt);
+    const icon = job.status === 'running'
+      ? '<span class="spin"></span>'
+      : `<span class="dot2 ${job.status === 'done' ? 'ok' : 'bad'}"></span>`;
+    const verdict = job.status === 'running' ? 'running' : job.status === 'done' ? 'finished' : 'failed';
+    const lastLine = job.lines.length ? job.lines[job.lines.length - 1].text : '';
+
+    bar.innerHTML = `
+      <div class="act-row">
+        ${icon}
+        <b>${esc(job.label)}</b>
+        <span class="tiny">${verdict} · ${elapsed}</span>
+        <span class="grow tiny">${esc(lastLine.slice(0, 90))}</span>
+        <button class="btn ghost" id="act-toggle">${activityOpen ? 'Hide' : 'Details'}</button>
+      </div>
+      ${activityOpen ? `<div class="log">${job.lines
+        .map((l) => `<div class="l-${l.kind}">${esc(l.text)}</div>`).join('')}</div>` : ''}`;
+    $('act-toggle').onclick = () => { activityOpen = !activityOpen; pollActivity(); };
+  } catch {
+    // The dashboard may be restarting; the next tick will pick it up.
+  }
+}
+
 /* ---------------------------------------------------------------- jobs -- */
 
 function renderLog(target, job) {
@@ -597,6 +691,29 @@ async function renderReview() {
         ${esc(c.name)}${c.tags.length ? ' — ' + esc(c.tags.join('/')) : ''}</option>`).join('')}
     </select>`;
 
+  const STAGE_LABEL = {
+    'not-made': 'Not made yet',
+    failed: 'Failed',
+    stale: 'Needs re-making',
+    made: 'Video made',
+    uploaded: 'Uploaded',
+    scheduled: 'Scheduled',
+  };
+
+  const statusFor = (v) => {
+    const bits = [`<span class="chip ${esc(v.stage)}">${esc(STAGE_LABEL[v.stage] || v.stage)}</span>`];
+    const meta = [];
+    if (v.renderedAt) meta.push('made ' + when(v.renderedAt));
+    if (v.bytes) meta.push((v.bytes / 1024 / 1024).toFixed(1) + ' MB');
+    if (v.assignedName) meta.push(v.assignedName);
+    if (v.publishAt) meta.push('posts ' + v.publishAt.replace('T', ' ').slice(0, 16));
+    if (v.stage === 'stale' && v.staleReasons.length) {
+      meta.push('because ' + v.staleReasons.join(' and '));
+    }
+    if (v.lastError) meta.push('error: ' + v.lastError.message.slice(0, 80));
+    return bits.join(' ') + (meta.length ? `<div class="meta">${esc(meta.join('  ·  '))}</div>` : '');
+  };
+
   $('variants').innerHTML = variants.map((v, i) => `
     <div class="card variant">
       ${v.rendered
@@ -604,6 +721,7 @@ async function renderReview() {
         : `<img class="preview" data-preview="${i}" alt="preview of the hook" />`}
       <div>
         <span class="tag">${esc(v.variation || v.angle || 'variant')}</span>
+        ${statusFor(v)}
         <label>Hook (burned onto the video)</label>
         <input data-hook="${i}" value="${esc(v.text)}" />
         <label>B-roll clip ${v.brollPath ? '(overridden)' : '(from your selection)'}</label>
@@ -707,21 +825,38 @@ async function saveSpec(msgEl) {
 
 /* ------------------------------------------------------------- publish -- */
 
+function when(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const mins = Math.round((Date.now() - d.getTime()) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + ' min ago';
+  if (mins < 1440) return Math.round(mins / 60) + 'h ago';
+  return d.toLocaleDateString();
+}
+
 function renderPublish() {
   if (!current) return;
   const tz = (state.settings.REEL_TIMEZONE && state.settings.REEL_TIMEZONE.value) || 'UTC';
-  const rendered = current.variants.filter((v) => v.rendered).length;
+  const usable = current.variants.filter((v) => v.stage === 'made' || v.stage === 'uploaded' || v.stage === 'scheduled');
+  const stale = current.variants.filter((v) => v.stage === 'stale');
+  const rendered = usable.length;
   const trial = state.checks.trialReel && state.checks.trialReel.ok;
 
   const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
 
   $('publish-body').innerHTML = `
-    ${rendered === 0 ? '<div class="banner bad">No videos made yet. Go back to Review and press "Make the videos".</div>' : ''}
+    ${rendered === 0 ? '<div class="banner bad">No videos ready. Go back to Review and press "Make the videos".</div>' : ''}
+    ${stale.length ? `<div class="banner">${stale.length} video(s) no longer match their hook or clip and will be skipped. Re-make them in Review first.</div>` : ''}
     ${trial ? '' : '<div class="banner">Trial-reel field not set, so these will post as ordinary reels, visible to your followers. Set it up under Setup if you want trial reels.</div>'}
 
     <div class="card">
-      <h3>${esc(current.spec.topic)}</h3>
-      <p class="hint">${rendered} video(s) ready.</p>
+      <h3>${esc(current.spec.seedHook || current.spec.topic)}</h3>
+      <p class="hint">${rendered} video(s) ready, up to date with their hooks.</p>
+      <div>${usable.map((v) => `<div class="clip">
+        <span class="nm">${esc(v.text)}</span>
+        <span class="chip ${esc(v.stage)}">${esc(v.stage)}</span>
+        <span class="mb">${v.renderedAt ? esc(when(v.renderedAt)) : ''}</span></div>`).join('')}</div>
       <div class="row">
         <div><label>First post</label><input id="p-start" type="datetime-local" value="${tomorrow}T09:00" /></div>
         <div><label>Timezone</label><input id="p-tz" value="${esc(tz)}" /></div>
@@ -910,6 +1045,9 @@ $('btn-ideate').onclick = async () => {
     $('btn-ideate').textContent = 'Write the variations';
   }
 };
+
+setInterval(pollActivity, 1000);
+pollActivity();
 
 refresh().catch((err) => {
   document.querySelector('main').innerHTML =

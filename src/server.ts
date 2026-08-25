@@ -41,6 +41,7 @@ import {
   ensureProjectDirs,
   type ProjectPaths,
 } from './project.ts';
+import { readState, stalenessReasons, variantStage } from './state.ts';
 import type { ReelSpec } from './types.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -347,7 +348,7 @@ async function handleApi(ctx: Ctx): Promise<unknown> {
         log,
       );
       return { slug };
-    });
+    }, slug);
     return { jobId: job.id, slug };
   }
 
@@ -359,19 +360,32 @@ async function handleApi(ctx: Ctx): Promise<unknown> {
     if (method === 'GET') {
       const caption = captionFor(spec, spec.seedHook ?? '');
       const assignment = assignClips(paths, spec, spec.hooks);
+      const state = readState(paths);
       return {
         spec: { ...spec, caption: caption.text },
         captionCheck: checkCaption(caption.text),
         variants: spec.hooks.map((hook) => {
           const assigned = assignment.get(hook.id) ?? null;
+          const vState = state.variants[hook.id] ?? {};
+          const hasVideo = existsSync(join(paths.out, `${hook.id}.mp4`));
+          const staleReasons = stalenessReasons(spec, hook, vState, assigned);
           return {
             ...hook,
-            rendered: existsSync(join(paths.out, `${hook.id}.mp4`)),
+            rendered: hasVideo,
             videoUrl: `/media/${slug}/${hook.id}.mp4`,
             coverUrl: `/media/${slug}/${hook.id}.jpg`,
             // What render will use, so Review reports rather than re-asks.
             assignedClip: assigned,
             assignedName: assigned === null ? null : basename(assigned),
+            // What actually happened, so nothing has to be inferred from a file count.
+            stage: variantStage(hasVideo, vState, staleReasons.length > 0),
+            staleReasons,
+            renderedAt: vState.render?.at ?? null,
+            bytes: vState.render?.bytes ?? null,
+            uploadUrl: vState.upload?.url ?? null,
+            publishAt: vState.schedule?.publishAt ?? null,
+            postId: vState.schedule?.postId ?? null,
+            lastError: vState.lastError ?? null,
           };
         }),
       };
@@ -401,7 +415,7 @@ async function handleApi(ctx: Ctx): Promise<unknown> {
         log,
       );
       return { slug: spec.slug };
-    });
+    }, spec.slug);
     return { jobId: job.id };
   }
 
@@ -410,7 +424,7 @@ async function handleApi(ctx: Ctx): Promise<unknown> {
     const job = startJob(`Uploading ${spec.slug}`, async (log) => {
       await runUpload(paths, spec, body['covers'] === true, log);
       return { slug: spec.slug };
-    });
+    }, spec.slug);
     return { jobId: job.id };
   }
 
@@ -433,7 +447,7 @@ async function handleApi(ctx: Ctx): Promise<unknown> {
         },
         log,
       );
-    });
+    }, spec.slug);
     return { jobId: job.id };
   }
 

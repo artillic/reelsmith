@@ -156,6 +156,19 @@ npm run reel -- rank --project content/move-to-thailand
 `npm run reel -- <args>` in development; `npm run build` then `reel <args>` if
 you'd rather install the bin.
 
+## Knowing what happened
+
+Work runs on the server, not in the browser tab, so navigating away or reloading
+loses nothing — an activity bar reattaches to whatever is running or last ran,
+with its full log.
+
+Each stage records the inputs it used in `state.json`, so a variant reports a
+real status rather than a file count: *not made*, *video made*, *uploaded*,
+*scheduled*, or **needs re-making** when the hook, clip, style, size or position
+has changed since it was rendered — and it names which. Re-rendering clears the
+recorded upload, so a stale URL is never reported as current, and Publish counts
+only variants that are genuinely up to date.
+
 ## Project layout
 
 One directory per topic, one file per stage. Every stage is re-runnable and every
@@ -163,7 +176,8 @@ intermediate is a file you can open, diff, or hand-edit.
 
 ```
 content/move-to-thailand/
-  spec.json        hooks, reasons, hashtags, CTA
+  spec.json        caption, seed hook, variants, chosen b-roll, text style
+  state.json       what was made, uploaded and scheduled, and from which inputs
   broll/           project-local footage (overrides the shared library)
   out/             <hookId>.mp4, <hookId>.jpg (cover), <hookId>.overlay.png
   captions/        <hookId>.txt
